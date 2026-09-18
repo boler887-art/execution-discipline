@@ -20,6 +20,11 @@
     return n;
   };
   const startOfDay = (d) => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
+  function validLocalDate(y, m, d) {
+    const x = new Date(y, m - 1, d);
+    if (x.getFullYear() !== y || x.getMonth() !== m - 1 || x.getDate() !== d) return null;
+    return startOfDay(x);
+  }
   function parseDate(raw) {
     if (raw == null || raw === '') return null;
     if (raw instanceof Date && !isNaN(raw)) return startOfDay(raw);
@@ -28,16 +33,50 @@
       return startOfDay(new Date(utc.getUTCFullYear(), utc.getUTCMonth(), utc.getUTCDate()));
     }
     const s = String(raw).trim();
-    let m = s.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})/);
-    if (m) return startOfDay(new Date(+m[3], +m[2] - 1, +m[1]));
-    m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-    if (m) return startOfDay(new Date(+m[1], +m[2] - 1, +m[3]));
+    let m = s.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})(?:\s|$)/);
+    if (m) return validLocalDate(+m[3], +m[2], +m[1]);
+    m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s]|$)/);
+    if (m) return validLocalDate(+m[1], +m[2], +m[3]);
     const d = new Date(s); return isNaN(d) ? null : startOfDay(d);
   }
   const daysBetween = (a, b) => Math.round((startOfDay(a) - startOfDay(b)) / 86400000);
   const fmt = (d) => d ? String(d.getDate()).padStart(2,'0') + '.' + String(d.getMonth()+1).padStart(2,'0') + '.' + d.getFullYear() : '—';
   const normSpace = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  const normSearch = (s) => normSpace(s).toLowerCase();
   const normHeader = (s) => normSpace(s).toLowerCase();
+  const issue = (severity, code, message) => ({ severity, code, message });
+  function normalizeIssue(w) {
+    if (w && typeof w === 'object' && w.message) return { severity:w.severity || 'WARNING', code:w.code || 'GENERIC', message:String(w.message) };
+    const message = String(w || '');
+    let severity = 'WARNING';
+    if (/structure\.xlsx не загружена|неоднозначное сопоставление/i.test(message)) severity = 'ERROR';
+    else if (/дубликат|отличается от structure|не найдено в structure/i.test(message)) severity = 'INFO';
+    return { severity, code:'LEGACY', message };
+  }
+  function mergeIssues() {
+    const all = Array.from(arguments).flat().filter(Boolean).map(normalizeIssue);
+    const seen = new Set();
+    return all.filter(w => { const k=w.severity+'|'+w.code+'|'+w.message; if(seen.has(k)) return false; seen.add(k); return true; });
+  }
+  function issueStats(records, extra) {
+    const all = [];
+    (records || []).forEach(r => (r.warnings || []).forEach(w => all.push(normalizeIssue(w))));
+    (extra || []).forEach(w => all.push(normalizeIssue(w)));
+    const counts = { ERROR:0, WARNING:0, INFO:0 };
+    all.forEach(w => { counts[w.severity] = (counts[w.severity] || 0) + 1; });
+    return { all, counts };
+  }
+  function searchMatch(query, values) {
+    const q = normSearch(query);
+    if (!q) return true;
+    return normSearch((values || []).filter(v => v != null && v !== '').join(' ')).includes(q);
+  }
+  function orgSearchValues(r, includePositions) {
+    const o = (r && r.organization) || {};
+    const vals = [].concat(o.resolvedUnits || [], o.curators || [], o.jointGroups || [], o.spLeaders || [], o.norDirectors || [], o.departmentHeads || []);
+    if (includePositions) vals.push(...(o.positions || []));
+    return vals;
+  }
   const normalizeName = (s) => normSpace(s).replace(/ё/gi,'е').replace(/[.]/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
   function nameParts(s) {
     const p = normalizeName(s).split(' ').filter(Boolean);
@@ -51,9 +90,10 @@
     return map[normSpace(s).toLowerCase()] || normSpace(s);
   }
   function classifyDeadline(raw) {
-    if (raw == null || String(raw).trim() === '') return { date:null, type:'MISSING', text:null };
+    if (raw == null || String(raw).trim() === '') return { date:null, type:'MISSING', text:null, invalidDateLike:false };
     const text = String(raw).trim(), parsed = parseDate(raw);
-    return parsed ? { date:parsed, type:'DATE', text } : { date:null, type:'TEXT', text };
+    const dateLike = /(?:^|\s)\d{1,4}[.\/-]\d{1,2}[.\/-]\d{1,4}(?:\s|$)/.test(text);
+    return parsed ? { date:parsed, type:'DATE', text, invalidDateLike:false } : { date:null, type:'TEXT', text, invalidDateLike:dateLike };
   }
   function deadlineDisplay(type, date, text, delta, status, module) {
     if (type === 'TEXT') return text || '—';
@@ -92,7 +132,7 @@
   const F = { p: emptyF(), a: emptyF(), i: emptyF() };
   const SORT = { p: {key:'', dir:1}, a: {key:'', dir:1}, i: {key:'', dir:1} };
   let openMs = '';
-  const S = { page:'overview', structure:null, structureError:null, notice:'', protocols:[], appeals:[], incoming:[], protoMeta:null, appealMeta:null, inMeta:null, protoKpi:'', appealKpi:'', inKpi:'', tabA:'all', tabI:'all', detail:null, err:'' };
+  const S = { page:'overview', structure:null, structureError:null, notice:'', protocols:[], appeals:[], incoming:[], protoMeta:null, appealMeta:null, inMeta:null, uploadAttempt:{1:null,2:null,3:null}, logoLoaded:null, protoKpi:'', appealKpi:'', inKpi:'', tabA:'all', tabI:'all', detail:null, err:'' };
   const refDate = () => startOfDay(new Date());
 
   function parseStructure(wb) {
@@ -152,7 +192,7 @@
   function enrichUnits(index, units) {
     const resolvedUnits = [...new Set(units.filter(Boolean))];
     const org = { resolvedUnits, curators:[], jointGroups:[], spLeaders:[], norDirectors:[], departmentHeads:[], positions:[], isJointExecution: resolvedUnits.length > 1, warnings:[] };
-    if (!index) { org.warnings.push('structure.xlsx не загружена'); return org; }
+    if (!index) { org.warnings.push(issue('ERROR','STRUCTURE_NOT_LOADED','structure.xlsx не загружена')); return org; }
     resolvedUnits.forEach(u => {
       index.people.filter(p => p.structuralUnit === u).forEach(p => { if (p.curator) org.curators.push(p.curator); if (p.jointExecution) org.jointGroups.push(p.jointExecution); });
       (index.spLeaderByUnit[u] || []).forEach(n => org.spLeaders.push(n));
@@ -170,8 +210,8 @@
     org.positions = [...new Set(hits.map(h => h.position).filter(Boolean))];
     org.matchedPersons = hits.map(h => h.fullName);
     org.matchState = match.state;
-    if (fio && match.state === 'NOT_FOUND') org.warnings.push('Ф.И.О. не найдено в structure.xlsx');
-    if (fio && match.state === 'AMBIGUOUS') org.warnings.push('Неоднозначное сопоставление Ф.И.О.; структура не назначена');
+    if (fio && match.state === 'NOT_FOUND') org.warnings.push(issue('INFO','PERSON_NOT_FOUND','Ф.И.О. не найдено в structure.xlsx'));
+    if (fio && match.state === 'AMBIGUOUS') org.warnings.push(issue('ERROR','PERSON_AMBIGUOUS','Неоднозначное сопоставление Ф.И.О.; структура не назначена'));
     return org;
   }
   function knownUnitList(index) {
@@ -252,38 +292,47 @@
   function finishProto(r) {
     r.daysDelta = r.deadlineDate ? daysBetween(r.deadlineDate, refDate()) : null;
     r.deadlineDisplay = deadlineDisplay(r.deadlineType, r.deadlineDate, r.deadlineText, r.daysDelta, r.executionStatusNormalized, 'protocol');
-    r.nextAction = protoAction(r); r.warnings = r.warnings || [];
-    const w = [];
-    if (!r.executionStatusNormalized) w.push('пустой статус');
-    else if (!/в работе|рабочий контроль|просрочено|снят с контроля|на снятии|постоянно|не исполнен/i.test(r.executionStatusNormalized)) w.push('неизвестный статус: ' + r.executionStatusNormalized);
-    if (r.deadlineType === 'MISSING' && !/снят с контроля/i.test(r.executionStatusNormalized)) w.push('отсутствующий срок у активной записи');
-    if (r.deadlineDate && r.daysDelta != null && r.daysDelta < 0 && !/просрочено|снят с контроля/i.test(r.executionStatusNormalized)) w.push('Срок истёк, но статус источника не «Просрочено»');
-    if (/просрочено/i.test(r.executionStatusNormalized) && r.daysDelta != null && r.daysDelta >= 0) w.push('Статус источника «Просрочено», однако срок исполнения ещё не наступил');
-    if (S.structure && (r.resolvedUnits||[]).some(u => u !== 'Не определено' && !S.structure.units.some(x => x.toLowerCase() === String(u).toLowerCase()) && !/^руководители сп$|^директора нор$/i.test(u))) w.push('неизвестное структурное подразделение: ' + (r.resolvedUnits||[]).join(', '));
-    r.warnings = w;
+    r.nextAction = protoAction(r);
+    const w = [].concat(r.sourceWarnings || [], (r.organization && r.organization.warnings) || []);
+    if (!r.executionStatusNormalized) w.push(issue('WARNING','EMPTY_STATUS','Пустой статус исполнения'));
+    else if (!/^(В работе|Рабочий контроль|Просрочено|Снят с контроля|На снятии с контроля|Не исполнен)$/i.test(r.executionStatusNormalized)) w.push(issue('WARNING','UNKNOWN_STATUS','Неизвестный статус: ' + r.executionStatusNormalized));
+    if (r.protocolDateRaw != null && String(r.protocolDateRaw).trim() && !r.protocolDate) w.push(issue('WARNING','INVALID_PROTOCOL_DATE','Некорректная дата протокола: ' + String(r.protocolDateRaw)));
+    if (r.deadlineInvalidDateLike) w.push(issue('WARNING','INVALID_DEADLINE_DATE','Некорректный формат даты срока исполнения: ' + String(r.deadlineText || '')));
+    if (r.deadlineType === 'MISSING' && r.executionStatusNormalized !== 'Снят с контроля') w.push(issue('WARNING','MISSING_DEADLINE','Не указан срок исполнения'));
+    if (r.deadlineDate && r.daysDelta != null && r.daysDelta < 0 && r.executionStatusNormalized !== 'Просрочено' && r.executionStatusNormalized !== 'Снят с контроля') w.push(issue('WARNING','EXPIRED_NOT_OVERDUE','Срок истёк, но статус источника не «Просрочено»'));
+    if (r.executionStatusNormalized === 'Просрочено' && r.daysDelta != null && r.daysDelta >= 0) w.push(issue('WARNING','OVERDUE_FUTURE_DEADLINE','Статус источника «Просрочено», однако срок исполнения ещё не наступил'));
+    if (S.structure && (r.resolvedUnits||[]).some(u => u !== 'Не определено' && !S.structure.units.some(x => x.toLowerCase() === String(u).toLowerCase()) && !/^руководители сп$|^директора нор$/i.test(u))) w.push(issue('WARNING','UNKNOWN_STRUCTURE_TOKEN','Неизвестное структурное подразделение: ' + (r.resolvedUnits||[]).join(', ')));
+    r.warnings = mergeIssues(w);
     return r;
   }
   function finishAppeal(r) {
     r.daysDelta = r.deadlineDate ? daysBetween(r.deadlineDate, refDate()) : null;
     r.deadlineDisplay = deadlineDisplay(r.deadlineType, r.deadlineDate, r.deadlineText, r.daysDelta, r.executionStatusNormalized, 'appeal');
     r.nextAction = appealAction(r);
-    const w = [...((r.organization && r.organization.warnings) || [])];
-    if (!r.executionStatusNormalized) w.push('Пустой статус исполнения');
-    else if (!/на исполнении|завершено/i.test(r.executionStatusNormalized)) w.push('Неизвестный статус: ' + r.executionStatusNormalized);
-    if (r.deadlineType === 'MISSING' && !/завершено/i.test(r.executionStatusNormalized)) w.push('Не указан срок исполнения');
-    if (r.sourceDepartment && r.resolvedUnit !== 'Не определено' && normSpace(r.sourceDepartment).toLowerCase() !== normSpace(r.resolvedUnit).toLowerCase()) w.push('Исходное подразделение отличается от structure.xlsx');
-    r.warnings = [...new Set(w)]; return r;
+    const w = [].concat(r.sourceWarnings || [], (r.organization && r.organization.warnings) || []);
+    if (!r.executionStatusNormalized) w.push(issue('WARNING','EMPTY_STATUS','Пустой статус исполнения'));
+    else if (!/^(На исполнении|Завершено)$/i.test(r.executionStatusNormalized)) w.push(issue('WARNING','UNKNOWN_STATUS','Неизвестный статус: ' + r.executionStatusNormalized));
+    if (r.registrationDateRaw != null && String(r.registrationDateRaw).trim() && !r.registrationDate) w.push(issue('WARNING','INVALID_REGISTRATION_DATE','Некорректная дата регистрации обращения: ' + String(r.registrationDateRaw)));
+    if (r.responseDateRaw != null && String(r.responseDateRaw).trim() && !r.responseDate) w.push(issue('WARNING','INVALID_RESPONSE_DATE','Некорректная дата предоставления ответа: ' + String(r.responseDateRaw)));
+    if (r.deadlineInvalidDateLike) w.push(issue('WARNING','INVALID_DEADLINE_DATE','Некорректный формат даты срока исполнения: ' + String(r.deadlineText || '')));
+    if (r.deadlineType === 'MISSING' && r.executionStatusNormalized !== 'Завершено') w.push(issue('WARNING','MISSING_DEADLINE','Не указан срок исполнения'));
+    if (r.sourceDepartment && r.resolvedUnit !== 'Не определено' && normSearch(r.sourceDepartment) !== normSearch(r.resolvedUnit)) w.push(issue('INFO','SOURCE_DEPARTMENT_MISMATCH','Исходное подразделение отличается от structure.xlsx'));
+    r.warnings = mergeIssues(w); return r;
   }
   function finishIncoming(r) {
     r.daysDelta = r.deadlineDate ? daysBetween(r.deadlineDate, refDate()) : null;
     r.deadlineDisplay = deadlineDisplay(r.deadlineType, r.deadlineDate, r.deadlineText, r.daysDelta, r.executionStatusNormalized, 'incoming');
     r.nextAction = inAction(r);
-    const w = [...((r.organization && r.organization.warnings) || [])];
-    if (!r.executionStatusNormalized) w.push('Пустой статус исполнения');
-    else if (!/не исполнено|не исполнен|на исполнении|выполнен|выполнено/i.test(r.executionStatusNormalized)) w.push('Неизвестный статус: ' + r.executionStatusNormalized);
-    if (r.deadlineType === 'MISSING' && !/выполнен|выполнено/i.test(r.executionStatusNormalized)) w.push('Не указан срок исполнения');
-    if (r.sourceDepartment && r.resolvedUnit !== 'Не определено' && normSpace(r.sourceDepartment).toLowerCase() !== normSpace(r.resolvedUnit).toLowerCase()) w.push('Исходное подразделение отличается от structure.xlsx');
-    r.warnings = [...new Set(w)]; return r;
+    const w = [].concat(r.sourceWarnings || [], (r.organization && r.organization.warnings) || []);
+    if (!r.executionStatusNormalized) w.push(issue('WARNING','EMPTY_STATUS','Пустой статус исполнения'));
+    else if (!/^(Не исполнено|Не исполнен|На исполнении|Выполнен|Выполнено)$/i.test(r.executionStatusNormalized)) w.push(issue('WARNING','UNKNOWN_STATUS','Неизвестный статус: ' + r.executionStatusNormalized));
+    if (r.deadlineInvalidDateLike) w.push(issue('WARNING','INVALID_DEADLINE_DATE','Некорректный формат даты срока исполнения: ' + String(r.deadlineText || '')));
+    if (r.deadlineType === 'MISSING' && !/^(Выполнен|Выполнено)$/i.test(r.executionStatusNormalized)) w.push(issue('WARNING','MISSING_DEADLINE','Не указан срок исполнения'));
+    const regText = String(r.regNumberDate || '');
+    const dateLike = /(?:^|\s)\d{1,2}[.\/]\d{1,2}[.\/]\d{4}(?:\s|$)/.test(regText);
+    if (dateLike && !extractRegDate(regText)) w.push(issue('WARNING','INVALID_INCOMING_DATE','Не удалось распознать дату входящего документа'));
+    if (r.sourceDepartment && r.resolvedUnit !== 'Не определено' && normSearch(r.sourceDepartment) !== normSearch(r.resolvedUnit)) w.push(issue('INFO','SOURCE_DEPARTMENT_MISMATCH','Исходное подразделение отличается от structure.xlsx'));
+    r.warnings = mergeIssues(w); return r;
   }
 
   const PROTO_REQ = ['№ Протокола','Дата','№ поручения','Содержание поручений','Структурное подразделение','Срок исполнения','Информация о ходе исполнения','Статус исполнения'];
@@ -303,7 +352,18 @@
   function markDuplicateWarnings(records, keyFn) {
     const counts = new Map();
     records.forEach(r => { const k=normSpace(keyFn(r)); if(k) counts.set(k,(counts.get(k)||0)+1); });
-    records.forEach(r => { const k=normSpace(keyFn(r)); if(k && counts.get(k)>1) { r.warnings=r.warnings||[]; r.warnings.push('Возможный дубликат исходного идентификатора'); r.warnings=[...new Set(r.warnings)]; } });
+    records.forEach(r => { const k=normSpace(keyFn(r)); if(k && counts.get(k)>1) { r.sourceWarnings = mergeIssues(r.sourceWarnings || [], [issue('INFO','DUPLICATE_SOURCE_ID','Возможный дубликат исходного идентификатора')]); r.warnings = mergeIssues(r.warnings || [], r.sourceWarnings); } });
+  }
+  function dateRangeText(records, getter) {
+    const dates=(records||[]).map(getter).filter(d=>d instanceof Date && !isNaN(d)).sort((a,b)=>a-b);
+    if (!dates.length) return 'не определён';
+    return fmt(dates[0]) + (dates.length>1 && dates[dates.length-1].getTime()!==dates[0].getTime() ? ' — ' + fmt(dates[dates.length-1]) : '');
+  }
+  function finalizeMeta(meta, records, dateGetter) {
+    const qs=issueStats(records, meta.warnings || []);
+    meta.dateRange=dateRangeText(records, dateGetter);
+    meta.quality={ ERROR:qs.counts.ERROR||0, WARNING:qs.counts.WARNING||0, INFO:qs.counts.INFO||0 };
+    return meta;
   }
   function parseProtocols(wb, filename) {
     const found = detectSheet(wb, PROTO_REQ);
@@ -320,12 +380,16 @@
       if (/^протокол\s*№/i.test(protocolNumberRaw) && /\sот\s/i.test(protocolNumberRaw) && !assignmentNumberRaw && !status) { ignored++; continue; }
       const rawUnit = cellStr(row, header.colMap, 'Структурное подразделение');
       const tokens = splitUnits(rawUnit, S.structure), resolved = expandSpecial(S.structure, tokens);
-      const dl = classifyDeadline(cell(row, header.colMap, 'Срок исполнения'));
+      const deadlineRaw = cell(row, header.colMap, 'Срок исполнения');
+      const dl = classifyDeadline(deadlineRaw);
+      const protocolDateRaw = cell(row, header.colMap, 'Дата');
       const progress = cellStr(row, header.colMap, 'Информация о ходе исполнения');
-      records.push(finishProto({ kind:'p', id:'p-'+i+'-'+protocolNumberRaw, protocolNumberRaw, protocolDate: parseDate(cell(row, header.colMap, 'Дата')), assignmentNumberRaw: assignmentNumberRaw, assignmentText, sourceStructuralUnitRaw: rawUnit, sourceStructuralTokens: tokens, resolvedUnits: resolved, deadlineDate: dl.date, deadlineType: dl.type, deadlineText: dl.text, progressInfo: progress, progressPreview: previewProgress(progress), executionStatusNormalized: normStatus(status), organization: enrichUnits(S.structure, resolved), sourceRowNumber: i+1, warnings:[] }));
+      records.push(finishProto({ kind:'p', id:'p-'+i+'-'+protocolNumberRaw, protocolNumberRaw, protocolDateRaw, protocolDate: parseDate(protocolDateRaw), assignmentNumberRaw: assignmentNumberRaw, assignmentText, sourceStructuralUnitRaw: rawUnit, sourceStructuralTokens: tokens, resolvedUnits: resolved, deadlineRaw, deadlineDate: dl.date, deadlineType: dl.type, deadlineText: dl.text, deadlineInvalidDateLike:dl.invalidDateLike, progressInfo: progress, progressPreview: previewProgress(progress), executionStatusNormalized: normStatus(status), organization: enrichUnits(S.structure, resolved), sourceRowNumber: i+1, sourceWarnings:[], warnings:[] }));
     }
     markDuplicateWarnings(records, r => (r.protocolNumberRaw||'')+'|'+(r.assignmentNumberRaw||''));
-    return { records, meta:{ filename, sheet:sheetName, headerRow:header.rowIndex+1, valid:records.length, ignored, errors:[], loadedAt:new Date().toISOString() } };
+    records.forEach(finishProto);
+    const meta=finalizeMeta({ filename, sheet:sheetName, headerRow:header.rowIndex+1, valid:records.length, ignored, errors:[], warnings:[], loadedAt:new Date().toISOString() }, records, r=>r.protocolDate);
+    return { records, meta };
   }
   function parseAppeals(wb, filename) {
     const found = detectSheet(wb, APP_REQ);
@@ -336,11 +400,16 @@
       const number = cellStr(row, header.colMap, 'Номер обращения'); if (!number) { ignored++; continue; }
       const fio = cellStr(row, header.colMap, 'Ответственный исполнитель');
       const org = enrichByPerson(S.structure, fio);
-      const dl = classifyDeadline(cell(row, header.colMap, 'Срок исполнения'));
-      records.push(finishAppeal({ kind:'a', id:'a-'+number+'-'+i, number, registrationDate: parseDate(cell(row, header.colMap, 'Дата регистрации обращения')), author: cellStr(row, header.colMap, 'Автор обращения'), type: cellStr(row, header.colMap, 'Вид обращения'), summary: cellStr(row, header.colMap, 'Краткое содержание'), deadlineDate: dl.date, deadlineType: dl.type, deadlineText: dl.text, responseDate: parseDate(cell(row, header.colMap, 'Дата предоставления ответа')), executionStatusNormalized: normStatus(cellStr(row, header.colMap, 'Статус исполнения')), responsibleFio: fio, sourceDepartment: cellStr(row, header.colMap, 'Структурное подразделение'), resolvedUnit: org.resolvedUnits.length === 1 ? org.resolvedUnits[0] : 'Не определено', organization: org, sourceRowNumber: i+1, warnings: org.warnings }));
+      const deadlineRaw = cell(row, header.colMap, 'Срок исполнения');
+      const dl = classifyDeadline(deadlineRaw);
+      const registrationDateRaw = cell(row, header.colMap, 'Дата регистрации обращения');
+      const responseDateRaw = cell(row, header.colMap, 'Дата предоставления ответа');
+      records.push(finishAppeal({ kind:'a', id:'a-'+number+'-'+i, number, registrationDateRaw, registrationDate: parseDate(registrationDateRaw), author: cellStr(row, header.colMap, 'Автор обращения'), type: cellStr(row, header.colMap, 'Вид обращения'), summary: cellStr(row, header.colMap, 'Краткое содержание'), deadlineRaw, deadlineDate: dl.date, deadlineType: dl.type, deadlineText: dl.text, deadlineInvalidDateLike:dl.invalidDateLike, responseDateRaw, responseDate: parseDate(responseDateRaw), executionStatusNormalized: normStatus(cellStr(row, header.colMap, 'Статус исполнения')), responsibleFio: fio, sourceDepartment: cellStr(row, header.colMap, 'Структурное подразделение'), resolvedUnit: org.resolvedUnits.length === 1 ? org.resolvedUnits[0] : 'Не определено', organization: org, sourceRowNumber: i+1, sourceWarnings:[], warnings: org.warnings }));
     }
     markDuplicateWarnings(records, r => r.number||'');
-    return { records, meta:{ filename, sheet:sheetName, headerRow:header.rowIndex+1, valid:records.length, ignored, errors:[], loadedAt:new Date().toISOString() } };
+    records.forEach(finishAppeal);
+    const meta=finalizeMeta({ filename, sheet:sheetName, headerRow:header.rowIndex+1, valid:records.length, ignored, errors:[], warnings:[], loadedAt:new Date().toISOString() }, records, r=>r.registrationDate);
+    return { records, meta };
   }
   function parseIncoming(wb, filename) {
     const found = detectSheet(wb, IN_REQ);
@@ -353,17 +422,20 @@
       const reg = cellStr(row, header.colMap, 'Рег. номер и дата входящего документа'); if (!reg) { ignored++; continue; }
       const fio = hasResponsible ? cellStr(row, header.colMap, 'Ответственный исполнитель') : '';
       const org = enrichByPerson(S.structure, fio);
-      if (!hasResponsible) org.warnings.push('В файле отсутствует «Ответственный исполнитель»; структура не может быть определена по Ф.И.О.');
-      const dl = classifyDeadline(cell(row, header.colMap, 'Срок исполнения'));
+      if (!hasResponsible) org.warnings.push(issue('WARNING','RESPONSIBLE_COLUMN_MISSING','В файле отсутствует «Ответственный исполнитель»; структура не может быть определена по Ф.И.О.'));
+      const deadlineRaw = cell(row, header.colMap, 'Срок исполнения');
+      const dl = classifyDeadline(deadlineRaw);
       const sourceDepartment = hasDept ? (cellStr(row, header.colMap, 'Подразделение') || cellStr(row, header.colMap, 'Структурное подразделение')) : '';
-      const rec = { kind:'i', id:'i-'+reg+'-'+i, regNumberDate: reg, summary: cellStr(row, header.colMap, 'Краткое содержание'), responsibleFio: fio, sourceDepartment, resolvedUnit: org.resolvedUnits.length === 1 ? org.resolvedUnits[0] : 'Не определено', deadlineDate: dl.date, deadlineType: dl.type, deadlineText: dl.text, executionStatusNormalized: normStatus(cellStr(row, header.colMap, 'Статус исполнения')), organization: org, sourceRowNumber: i+1, warnings: org.warnings };
+      const rec = { kind:'i', id:'i-'+reg+'-'+i, regNumberDate: reg, summary: cellStr(row, header.colMap, 'Краткое содержание'), responsibleFio: fio, sourceDepartment, resolvedUnit: org.resolvedUnits.length === 1 ? org.resolvedUnits[0] : 'Не определено', deadlineRaw, deadlineDate: dl.date, deadlineType: dl.type, deadlineText: dl.text, deadlineInvalidDateLike:dl.invalidDateLike, executionStatusNormalized: normStatus(cellStr(row, header.colMap, 'Статус исполнения')), organization: org, sourceRowNumber: i+1, sourceWarnings:[], warnings: org.warnings };
       records.push(finishIncoming(rec));
     }
     markDuplicateWarnings(records, r => r.regNumberDate||'');
+    records.forEach(finishIncoming);
     const warnings = [];
-    if (!hasResponsible) warnings.push('Нет столбца «Ответственный исполнитель»: официальное СП будет «Не определено».');
-    if (!hasDept) warnings.push('Нет исходного столбца подразделения: audit-сравнение недоступно.');
-    return { records, meta:{ filename, sheet:sheetName, headerRow:header.rowIndex+1, valid:records.length, ignored, errors:[], warnings, loadedAt:new Date().toISOString() } };
+    if (!hasResponsible) warnings.push(issue('WARNING','RESPONSIBLE_COLUMN_MISSING','Нет столбца «Ответственный исполнитель»: официальное СП будет «Не определено».'));
+    if (!hasDept) warnings.push(issue('INFO','SOURCE_DEPARTMENT_COLUMN_MISSING','Нет исходного столбца подразделения: audit-сравнение недоступно.'));
+    const meta=finalizeMeta({ filename, sheet:sheetName, headerRow:header.rowIndex+1, valid:records.length, ignored, errors:[], warnings, loadedAt:new Date().toISOString() }, records, r=>extractRegDate(r.regNumberDate));
+    return { records, meta };
   }
   function reenrich() {
     S.protocols = S.protocols.map(r => { const tokens = splitUnits(r.sourceStructuralUnitRaw, S.structure); r.sourceStructuralTokens = tokens; const resolved = expandSpecial(S.structure, tokens); r.resolvedUnits = resolved; r.organization = enrichUnits(S.structure, resolved); return finishProto(r); });
@@ -496,7 +568,7 @@
   function protoBase(skip) {
     const f = F.p; skip = skip || {};
     return S.protocols.filter(r => {
-      if (f.q) { const hay = [r.protocolNumberRaw, r.assignmentNumberRaw, r.assignmentText, r.sourceStructuralUnitRaw, r.progressInfo, (r.resolvedUnits || []).join(' ')].join(' ').toLowerCase(); if (!hay.includes(f.q.toLowerCase())) return false; }
+      if (f.q && !searchMatch(f.q, [r.protocolNumberRaw, r.assignmentNumberRaw, r.assignmentText, r.sourceStructuralUnitRaw, r.progressInfo].concat(r.resolvedUnits || [], orgSearchValues(r, false)))) return false;
       if (!skip.units && !hasAny(f.units, r.resolvedUnits)) return false;
       if (!skip.assigned && !hasAny(f.assigned, r.sourceStructuralTokens || splitUnits(r.sourceStructuralUnitRaw, S.structure))) return false;
       if (!skip.curators && !hasAny(f.curators, r.organization.curators)) return false;
@@ -525,7 +597,7 @@
   function appealBase(skip) {
     const f = F.a; skip = skip || {};
     return S.appeals.filter(r => {
-      if (f.q) { const hay = [r.number, r.author, r.type, r.summary, r.resolvedUnit].join(' ').toLowerCase(); if (!hay.includes(f.q.toLowerCase())) return false; }
+      if (f.q && !searchMatch(f.q, [r.number, r.author, r.type, r.summary, r.resolvedUnit].concat(orgSearchValues(r, false)))) return false;
       if (f.number && !(r.number||'').toLowerCase().includes(f.number.toLowerCase())) return false;
       if (f.author && !(r.author||'').toLowerCase().includes(f.author.toLowerCase())) return false;
       if (f.summary && !(r.summary||'').toLowerCase().includes(f.summary.toLowerCase())) return false;
@@ -562,7 +634,7 @@
   function inBase(skip) {
     const f = F.i; skip = skip || {};
     return S.incoming.filter(r => {
-      if (f.q) { const hay = [r.regNumberDate, r.summary, r.resolvedUnit].join(' ').toLowerCase(); if (!hay.includes(f.q.toLowerCase())) return false; }
+      if (f.q && !searchMatch(f.q, [r.regNumberDate, r.summary, r.resolvedUnit].concat(orgSearchValues(r, true)))) return false;
       if (f.number && !(r.regNumberDate||'').toLowerCase().includes(f.number.toLowerCase())) return false;
       if (f.summary && !(r.summary||'').toLowerCase().includes(f.summary.toLowerCase())) return false;
       if (!hasAny(f.units, [r.resolvedUnit])) return false;
@@ -605,8 +677,8 @@
       pop.addEventListener('click', e => e.stopPropagation());
       const search = h('input', { placeholder:'Поиск' });
       search.addEventListener('input', () => {
-        const q = search.value.toLowerCase();
-        pop.querySelectorAll('label[data-opt]').forEach(l => { l.style.display = l.getAttribute('data-opt').toLowerCase().includes(q) ? '' : 'none'; });
+        const q = normSearch(search.value);
+        pop.querySelectorAll('label[data-opt]').forEach(l => { l.style.display = normSearch(l.getAttribute('data-opt')).includes(q) ? '' : 'none'; });
       });
       pop.appendChild(search);
       const acts = h('div', { class:'ms-actions' }, [h('button',{class:'btn ghost',type:'button'},'Все'), h('button',{class:'btn ghost',type:'button'},'Очистить')]);
@@ -650,6 +722,10 @@
     add('Совместное', f.joint, v => f.joint = f.joint.filter(x=>x!==v));
     add('Статус', f.statuses, v => f.statuses = f.statuses.filter(x=>x!==v));
     add('Вид', f.types, v => f.types = f.types.filter(x=>x!==v));
+    add('Должность', f.positions, v => f.positions = f.positions.filter(x=>x!==v));
+    if (f.q) add('Поиск', [normSpace(f.q)], () => f.q='');
+    if (f.author) add('Автор', [f.author], () => f.author='');
+    if (f.summary) add('Содержание', [f.summary], () => f.summary='');
     if (f.period && f.period!=='all') add('Период', [f.period], () => f.period='all');
     if (f.dlPreset) add('Срок', [f.dlPreset], () => f.dlPreset='');
     if (f.number) add('Номер', [f.number], () => f.number='');
@@ -657,7 +733,7 @@
     const rst = h('button', { class:'btn ghost', type:'button' }, 'Сбросить все');
     rst.onclick = () => resetF(which);
     bar.appendChild(rst);
-    const cnt = ['units','assigned','curators','heads','spLeaders','norDirectors','joint','statuses','types','positions'].reduce((n,k)=>n+(f[k]||[]).length,0) + ['number','author','summary','dateFrom','dateTo','dateMonth','dateYear','dlPreset','dlFrom','dlTo','dlMonth','dlYear','respFrom','respTo','respMonth','respYear'].reduce((n,k)=>n+(f[k]?1:0),0) + (f.period && f.period!=='all'?1:0) + (f.respMissing?1:0);
+    const cnt = ['units','assigned','curators','heads','spLeaders','norDirectors','joint','statuses','types','positions'].reduce((n,k)=>n+(f[k]||[]).length,0) + ['number','author','summary','dateFrom','dateTo','dateMonth','dateYear','dlPreset','dlFrom','dlTo','dlMonth','dlYear','respFrom','respTo','respMonth','respYear'].reduce((n,k)=>n+(f[k]?1:0),0) + (f.period && f.period!=='all'?1:0) + (f.respMissing?1:0) + (f.q?1:0);
     bar.appendChild(h('span', { class:'filter-count' }, 'Активных фильтров: ' + cnt));
     bar.appendChild(h('span', { class:'found' }, extra || ''));
     return bar;
@@ -723,22 +799,78 @@
     });
     tbl.appendChild(tb); wrap.appendChild(tbl); return wrap;
   }
+  function metaIssueSummary(meta, records, attempt) {
+    const extras=[];
+    (meta && meta.warnings || []).forEach(w=>extras.push(w));
+    if (attempt && attempt.error) extras.push(issue('ERROR','IMPORT_ERROR',attempt.error));
+    return issueStats(records || [], extras);
+  }
+  function issueBadge(severity, count) {
+    return h('span', { class:'dq-badge dq-' + String(severity).toLowerCase() }, severity + ': ' + (count || 0));
+  }
   function uploadCard(title, meta, kind) {
     const inp = h('input', { type:'file', accept:'.xlsx,.xls' });
     inp.addEventListener('change', async (e) => {
       const f = e.target.files && e.target.files[0]; if (!f) return;
+      const attemptAt=new Date().toISOString();
       try {
         const wb = XLSX.read(await f.arrayBuffer(), { type:'array', cellDates:true });
-        if (kind === 1) { const r = parseProtocols(wb, f.name); S.err = r.meta.errors[0] || ''; if (!S.err) { S.protocols = r.records; S.protoMeta = r.meta; } }
-        if (kind === 2) { const r = parseAppeals(wb, f.name); S.err = r.meta.errors[0] || ''; if (!S.err) { S.appeals = r.records; S.appealMeta = r.meta; } }
-        if (kind === 3) { const r = parseIncoming(wb, f.name); S.err = r.meta.errors[0] || ''; if (!S.err) { S.incoming = r.records; S.inMeta = r.meta; } }
-        persist(); render();
-      } catch (err) { S.err = String(err.message || err); render(); }
+        let r;
+        if (kind === 1) r = parseProtocols(wb, f.name);
+        if (kind === 2) r = parseAppeals(wb, f.name);
+        if (kind === 3) r = parseIncoming(wb, f.name);
+        const err=(r && r.meta && r.meta.errors && r.meta.errors[0]) || '';
+        S.uploadAttempt[kind]={ filename:f.name, at:attemptAt, error:err };
+        S.err = err;
+        if (!err) {
+          if (kind === 1) { S.protocols = r.records; S.protoMeta = r.meta; S.protoKpi=''; }
+          if (kind === 2) { S.appeals = r.records; S.appealMeta = r.meta; S.appealKpi=''; S.tabA='all'; }
+          if (kind === 3) { S.incoming = r.records; S.inMeta = r.meta; S.inKpi=''; S.tabI='all'; }
+          sanitizeStructureFilters();
+          await persist();
+        }
+        render();
+      } catch (err) {
+        const msg=String(err.message || err);
+        S.uploadAttempt[kind]={ filename:f.name, at:attemptAt, error:msg };
+        S.err=msg; render();
+      }
     });
+    const records = kind===1 ? S.protocols : kind===2 ? S.appeals : S.incoming;
+    const attempt=S.uploadAttempt[kind];
     const kids = [h('h3', {}, title), inp];
-    if (meta) { kids.push(h('div', { class:'meta' }, 'Файл: ' + meta.filename + ' · лист: ' + meta.sheet + ' · строка заголовков: ' + meta.headerRow + ' · записей: ' + meta.valid + ' · пропущено: ' + meta.ignored + ' · загружен: ' + new Date(meta.loadedAt).toLocaleString())); (meta.warnings||[]).forEach(w=>kids.push(h('div',{class:'warn'},w))); }
-    else kids.push(h('div', { class:'meta' }, 'Файл не загружен'));
+    if (meta) {
+      const qs=metaIssueSummary(meta, records, attempt);
+      kids.push(h('div', { class:'upload-grid' }, [
+        h('b',{},'Файл'), h('span',{},meta.filename || '—'),
+        h('b',{},'Лист'), h('span',{},meta.sheet || '—'),
+        h('b',{},'Строка заголовков'), h('span',{},String(meta.headerRow || '—')),
+        h('b',{},'Валидных записей'), h('span',{},String(meta.valid ?? 0)),
+        h('b',{},'Пропущено строк'), h('span',{},String(meta.ignored ?? 0)),
+        h('b',{},'Диапазон дат'), h('span',{},meta.dateRange || 'не определён'),
+        h('b',{},'Дата/время загрузки'), h('span',{},meta.loadedAt ? new Date(meta.loadedAt).toLocaleString() : '—')
+      ]));
+      kids.push(h('div',{class:'dq-row'},[issueBadge('ERROR',qs.counts.ERROR),issueBadge('WARNING',qs.counts.WARNING),issueBadge('INFO',qs.counts.INFO)]));
+      (meta.warnings||[]).slice(0,3).forEach(w=>{ const x=normalizeIssue(w); kids.push(h('div',{class:'dq-line dq-'+x.severity.toLowerCase()},x.severity+' · '+x.message)); });
+      if (attempt && attempt.error) kids.push(h('div',{class:'dq-line dq-error'},'ERROR · Последняя попытка «'+attempt.filename+'»: '+attempt.error+'; предыдущий корректный набор данных сохранён.'));
+    } else {
+      kids.push(h('div', { class:'meta' }, 'Файл не загружен'));
+      if (attempt && attempt.error) kids.push(h('div',{class:'dq-line dq-error'},'ERROR · '+attempt.error));
+    }
     return h('div', { class:'upload-card' }, kids);
+  }
+  function qualityPanel() {
+    const groups=[['Протоколы',S.protocols,S.protoMeta],['e-Өтініш',S.appeals,S.appealMeta],['Входящие',S.incoming,S.inMeta]];
+    const all=[];
+    groups.forEach(g=>{ (g[1]||[]).forEach(r=>(r.warnings||[]).forEach(w=>all.push(normalizeIssue(w)))); ((g[2]&&g[2].warnings)||[]).forEach(w=>all.push(normalizeIssue(w))); });
+    if (S.structureError) all.push(issue('ERROR','STRUCTURE_LOAD_ERROR','structure.xlsx: '+S.structureError));
+    const counts={ERROR:0,WARNING:0,INFO:0}, freq=new Map();
+    all.forEach(w=>{counts[w.severity]=(counts[w.severity]||0)+1; const k=w.severity+'|'+w.message; freq.set(k,(freq.get(k)||0)+1);});
+    const top=[...freq.entries()].sort((a,b)=>b[1]-a[1]).slice(0,8);
+    const body=[h('div',{class:'dq-summary'},[issueBadge('ERROR',counts.ERROR),issueBadge('WARNING',counts.WARNING),issueBadge('INFO',counts.INFO)])];
+    if (!top.length) body.push(h('div',{class:'meta'},'Предупреждений качества данных не обнаружено.'));
+    else top.forEach(([k,n])=>{ const parts=k.split('|'); body.push(h('div',{class:'dq-line dq-'+parts[0].toLowerCase()},parts[0]+' · '+parts.slice(1).join('|')+(n>1?' × '+n:''))); });
+    return h('div',{class:'sys'},[h('h3',{},'Качество данных (Data Quality)')].concat(body));
   }
 
   function sourceDeadline(r) { return r.deadlineDate ? fmt(r.deadlineDate) : (r.deadlineText || '—'); }
@@ -958,7 +1090,16 @@
     if (S.page === 'upload') {
       mainKids.push(h('h1', {}, 'Загрузка данных'), h('p', { class:'meta' }, 'Загрузите только три операционных файла. Организационная структура подключается автоматически.'));
       mainKids.push(h('div', { class:'cards3' }, [uploadCard('1.xlsx — Протокольные поручения', S.protoMeta, 1), uploadCard('2.xlsx — e-Өтініш', S.appealMeta, 2), uploadCard('3.xlsx — Входящие документы', S.inMeta, 3)]));
-      mainKids.push(h('div', { class:'sys' }, [h('h3', {}, 'Организационная структура'), h('div', { class:'meta' }, 'Файл: structure.xlsx · статус: ' + (S.structure ? 'загружена' : (S.structureError || 'нет')) + ' · записей: ' + (S.structure ? S.structure.people.length : 0) + ' · руководителей СП: ' + (S.structure ? Object.keys(S.structure.spLeaderByUnit).length : 0) + ' · директоров НОР: ' + (S.structure ? Object.keys(S.structure.norDirectorByUnit).length : 0) + ' · логотип: загружен')]));
+      mainKids.push(h('div', { class:'sys' }, [h('h3', {}, 'Организационная структура'), h('div', { class:'upload-grid' }, [
+        h('b',{},'Файл'),h('span',{},'structure.xlsx'),
+        h('b',{},'Статус'),h('span',{},S.structure ? 'Загружена' : (S.structureError || 'Не загружена')),
+        h('b',{},'Записей'),h('span',{},String(S.structure ? S.structure.people.length : 0)),
+        h('b',{},'Руководителей СП'),h('span',{},String(S.structure ? Object.keys(S.structure.spLeaderByUnit).length : 0)),
+        h('b',{},'Директоров НОР'),h('span',{},String(S.structure ? Object.keys(S.structure.norDirectorByUnit).length : 0)),
+        h('b',{},'Дата загрузки'),h('span',{},S.structure && S.structure.loadedAt ? new Date(S.structure.loadedAt).toLocaleString() : '—'),
+        h('b',{},'Логотип'),h('span',{},S.logoLoaded===true?'Загружен':S.logoLoaded===false?'Ошибка загрузки':'Проверка…')
+      ])]));
+      mainKids.push(qualityPanel());
     }
 
     if (window.__fid) {
@@ -975,12 +1116,16 @@
       else if (d.kind === 'a') { add('Номер обращения', d.number); add('Дата регистрации обращения', fmt(d.registrationDate)); add('Автор обращения', d.author); add('Вид обращения', d.type); add('Краткое содержание', d.summary); add('Ответственный исполнитель', d.responsibleFio); add('Структурное подразделение', d.resolvedUnit); add('Срок исполнения', d.deadlineDisplay); add('Дата предоставления ответа', fmt(d.responseDate)); add('Статус исполнения', d.executionStatusNormalized); add('Следующее действие', d.nextAction); add('Руководитель-куратор', (d.organization.curators||[]).join(', ')); add('Совместное исполнение', (d.organization.jointGroups||[]).join(', ') || (d.organization.isJointExecution?'Да':'Нет')); add('Руководитель подразделения', (d.organization.departmentHeads||[]).join(', ')); add('Руководитель СП', (d.organization.spLeaders||[]).join(', ')); add('Директор НОР', (d.organization.norDirectors||[]).join(', ')); add('Исходная строка', d.sourceRowNumber); add('Исходное подразделение из выгрузки', d.sourceDepartment); }
       else { add('Рег. номер и дата входящего документа', d.regNumberDate); add('Краткое содержание', d.summary); add('Структурное подразделение', d.resolvedUnit); add('Должность', (d.organization.positions||[]).join(', ')); add('Срок исполнения', d.deadlineDisplay); add('Статус исполнения', d.executionStatusNormalized); add('Следующее действие', d.nextAction); add('Руководитель-куратор', (d.organization.curators||[]).join(', ')); add('Совместное исполнение', (d.organization.jointGroups||[]).join(', ') || (d.organization.isJointExecution?'Да':'Нет')); add('Руководитель подразделения', (d.organization.departmentHeads||[]).join(', ')); add('Руководитель СП', (d.organization.spLeaders||[]).join(', ')); add('Директор НОР', (d.organization.norDirectors||[]).join(', ')); add('Исходная строка', d.sourceRowNumber); add('Исходное подразделение из выгрузки', d.sourceDepartment); }
       root.appendChild(h('div', { class:'drawer-back', onClick:() => { S.detail = null; render(); } }));
-      root.appendChild(h('aside', { class:'drawer' }, [h('button', { class:'btn ghost', onClick:() => { S.detail = null; render(); } }, 'Закрыть'), h('h2', {}, d.kind === 'p' ? 'Поручение' : d.kind === 'a' ? 'Обращение' : 'Входящий документ'), h('div', { class:'kv' }, kv)].concat((d.warnings||[]).map(w => h('div', { class:'warn' }, typeof w === 'string' ? w : w.message)))));
+      root.appendChild(h('aside', { class:'drawer' }, [h('button', { class:'btn ghost', onClick:() => { S.detail = null; render(); } }, 'Закрыть'), h('h2', {}, d.kind === 'p' ? 'Поручение' : d.kind === 'a' ? 'Обращение' : 'Входящий документ'), h('div', { class:'kv' }, kv)].concat((d.warnings||[]).map(w => { const x=normalizeIssue(w); return h('div', { class:'dq-line dq-'+x.severity.toLowerCase() }, x.severity+' · '+x.message); }))));
     }
   }
 
   async function boot() {
     await restore();
+    const logoProbe=new Image();
+    logoProbe.onload=()=>{S.logoLoaded=true; if(S.page==='upload') render();};
+    logoProbe.onerror=()=>{S.logoLoaded=false; if(S.page==='upload') render();};
+    logoProbe.src=LOGO+'?v='+Date.now();
     try {
       const res = await fetch(STRUCT, { cache:'no-store' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
