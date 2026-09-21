@@ -127,7 +127,7 @@
   const emptyRow = (row) => !row || row.every(c => c == null || String(c).trim() === '');
 
   function emptyF() {
-    return { q:'', units:[], assigned:[], curators:[], heads:[], spLeaders:[], norDirectors:[], joint:[], statuses:[], types:[], positions:[], number:'', author:'', summary:'', period:'all', dateFrom:'', dateTo:'', dateMonth:'', dateYear:'', dlPreset:'', dlFrom:'', dlTo:'', dlMonth:'', dlYear:'', respFrom:'', respTo:'', respMonth:'', respYear:'', respMissing:false, showAll:false };
+    return { q:'', units:[], assigned:[], curators:[], heads:[], spLeaders:[], norDirectors:[], joint:[], statuses:[], types:[], positions:[], number:'', author:'', summary:'', period:'all', dateFrom:'', dateTo:'', dateMonth:'', dateYear:'', dlPreset:'', dlFrom:'', dlTo:'', dlMonth:'', dlYear:'', respFrom:'', respTo:'', respMonth:'', respYear:'', respMissing:false, onlyJoint:false, showAll:false };
   }
   const F = { p: emptyF(), a: emptyF(), i: emptyF() };
   const SORT = { p: {key:'', dir:1}, a: {key:'', dir:1}, i: {key:'', dir:1} };
@@ -451,7 +451,7 @@
       heads:new Set(rows.flatMap(r => (r.organization&&r.organization.departmentHeads)||[])),
       spLeaders:new Set(rows.flatMap(r => (r.organization&&r.organization.spLeaders)||[])),
       norDirectors:new Set(rows.flatMap(r => (r.organization&&r.organization.norDirectors)||[])),
-      joint:new Set(rows.flatMap(r => ((r.organization&&r.organization.jointGroups)||[]).concat(r.organization&&r.organization.isJointExecution?['да']:[]))),
+      joint:new Set(rows.flatMap(r => (r.organization&&r.organization.jointGroups)||[])),
       positions:new Set(rows.flatMap(r => (r.organization&&r.organization.positions)||[]))
     });
     [['p',S.protocols],['a',S.appeals],['i',S.incoming]].forEach(([k,rows]) => {
@@ -575,10 +575,8 @@
       if (!skip.heads && !hasAny(f.heads, r.organization.departmentHeads)) return false;
       if (!skip.spLeaders && !hasAny(f.spLeaders, r.organization.spLeaders)) return false;
       if (!skip.norDirectors && !hasAny(f.norDirectors, r.organization.norDirectors)) return false;
-      if (!skip.joint && f.joint && f.joint.length) {
-        const ok = hasAny(f.joint, r.organization.jointGroups) || (f.joint.includes('да') && r.organization.isJointExecution);
-        if (!ok) return false;
-      }
+      if (!skip.joint && f.joint && f.joint.length && !hasAny(f.joint, r.organization.jointGroups)) return false;
+      if (f.onlyJoint && !r.organization.isJointExecution) return false;
       if (!hasAny(f.statuses, [r.executionStatusNormalized])) return false;
       if (!matchPeriod(r.protocolDate, f)) return false;
       if (!matchDeadline(r, f)) return false;
@@ -607,7 +605,7 @@
       if (!skip.heads && !hasAny(f.heads, r.organization.departmentHeads)) return false;
       if (!skip.spLeaders && !hasAny(f.spLeaders, r.organization.spLeaders)) return false;
       if (!skip.norDirectors && !hasAny(f.norDirectors, r.organization.norDirectors)) return false;
-      if (!skip.joint && f.joint && f.joint.length && !hasAny(f.joint, r.organization.jointGroups) && !(f.joint.includes('да') && r.organization.isJointExecution)) return false;
+      if (!skip.joint && f.joint && f.joint.length && !hasAny(f.joint, r.organization.jointGroups)) return false;
       if (!hasAny(f.statuses, [r.executionStatusNormalized])) return false;
       if (!matchPeriod(r.registrationDate, f)) return false;
       if (!matchDeadline(r, f)) return false;
@@ -643,7 +641,7 @@
       if (!skip.spLeaders && !hasAny(f.spLeaders, r.organization.spLeaders)) return false;
       if (!skip.norDirectors && !hasAny(f.norDirectors, r.organization.norDirectors)) return false;
       if (!skip.positions && !hasAny(f.positions, r.organization.positions)) return false;
-      if (!skip.joint && f.joint && f.joint.length && !hasAny(f.joint, r.organization.jointGroups) && !(f.joint.includes('да') && r.organization.isJointExecution)) return false;
+      if (!skip.joint && f.joint && f.joint.length && !hasAny(f.joint, r.organization.jointGroups)) return false;
       if (!hasAny(f.statuses, [r.executionStatusNormalized])) return false;
       if (!matchDeadline(r, f)) return false;
       const rd = extractRegDate(r.regNumberDate);
@@ -681,9 +679,8 @@
         pop.querySelectorAll('label[data-opt]').forEach(l => { l.style.display = normSearch(l.getAttribute('data-opt')).includes(q) ? '' : 'none'; });
       });
       pop.appendChild(search);
-      const acts = h('div', { class:'ms-actions' }, [h('button',{class:'btn ghost',type:'button'},'Все'), h('button',{class:'btn ghost',type:'button'},'Очистить')]);
-      acts.children[0].onclick = () => { selected.splice(0, selected.length, ...opts); render(); };
-      acts.children[1].onclick = () => { selected.splice(0, selected.length); render(); };
+      const acts = h('div', { class:'ms-actions' }, [h('button',{class:'btn ghost',type:'button'},'Очистить')]);
+      acts.children[0].onclick = () => { selected.splice(0, selected.length); openMs=''; render(); };
       pop.appendChild(acts);
       opts.forEach(o => {
         const shown = displayFn ? displayFn(o) : o;
@@ -705,7 +702,14 @@
     }
     return box;
   }
-  function resetF(which) { F[which] = emptyF(); render(); }
+  function resetF(which) {
+    F[which] = emptyF();
+    openMs = '';
+    if (which === 'p') S.protoKpi = '';
+    if (which === 'a') { S.appealKpi = ''; S.tabA = 'all'; }
+    if (which === 'i') { S.inKpi = ''; S.tabI = 'all'; }
+    render();
+  }
   function chipBar(f, which, extra) {
     const chips = [];
     const add = (k, arr, clear) => (arr||[]).forEach(v => {
@@ -720,6 +724,7 @@
     add('Руководитель СП', f.spLeaders, v => f.spLeaders = f.spLeaders.filter(x=>x!==v));
     add('Директор НОР', f.norDirectors, v => f.norDirectors = f.norDirectors.filter(x=>x!==v));
     add('Совместное', f.joint, v => f.joint = f.joint.filter(x=>x!==v));
+    if (f.onlyJoint) add('Режим', ['Только совместное исполнение'], () => f.onlyJoint=false);
     add('Статус', f.statuses, v => f.statuses = f.statuses.filter(x=>x!==v));
     add('Вид', f.types, v => f.types = f.types.filter(x=>x!==v));
     add('Должность', f.positions, v => f.positions = f.positions.filter(x=>x!==v));
@@ -733,7 +738,7 @@
     const rst = h('button', { class:'btn ghost', type:'button' }, 'Сбросить все');
     rst.onclick = () => resetF(which);
     bar.appendChild(rst);
-    const cnt = ['units','assigned','curators','heads','spLeaders','norDirectors','joint','statuses','types','positions'].reduce((n,k)=>n+(f[k]||[]).length,0) + ['number','author','summary','dateFrom','dateTo','dateMonth','dateYear','dlPreset','dlFrom','dlTo','dlMonth','dlYear','respFrom','respTo','respMonth','respYear'].reduce((n,k)=>n+(f[k]?1:0),0) + (f.period && f.period!=='all'?1:0) + (f.respMissing?1:0) + (f.q?1:0);
+    const cnt = ['units','assigned','curators','heads','spLeaders','norDirectors','joint','statuses','types','positions'].reduce((n,k)=>n+(f[k]||[]).length,0) + ['number','author','summary','dateFrom','dateTo','dateMonth','dateYear','dlPreset','dlFrom','dlTo','dlMonth','dlYear','respFrom','respTo','respMonth','respYear'].reduce((n,k)=>n+(f[k]?1:0),0) + (f.period && f.period!=='all'?1:0) + (f.respMissing?1:0) + (f.q?1:0) + (f.onlyJoint?1:0);
     bar.appendChild(h('span', { class:'filter-count' }, 'Активных фильтров: ' + cnt));
     bar.appendChild(h('span', { class:'found' }, extra || ''));
     return bar;
@@ -749,6 +754,27 @@
     (dynamicText||[]).forEach(t => { const v='text:'+String(t).toLowerCase(); if (!base.some(x=>x[0]===v) && !base.some(x=>String(t).toLowerCase().includes(x[0]) && x[0])) base.push([v,t]); });
     base.forEach(([v,l]) => s.appendChild(h('option', { value:v }, l)));
     s.value = f.dlPreset; s.onchange = () => { f.dlPreset = s.value; if (s.value) { f.dlFrom='';f.dlTo='';f.dlMonth='';f.dlYear=''; } render(); }; return s;
+  }
+  function dateRangeControl(f) {
+    const wrap = h('div', { class:'filter-range' });
+    wrap.appendChild(h('span', { class:'filter-label' }, 'Период'));
+    const from = h('input', { type:'date', title:'Период от' });
+    from.value = f.dateFrom || '';
+    from.onchange = e => { f.dateFrom=e.target.value; f.dateMonth=''; f.dateYear=''; f.period=(f.dateFrom||f.dateTo)?'custom':'all'; render(); };
+    const sep = h('span', { class:'range-sep' }, '—');
+    const to = h('input', { type:'date', title:'Период до' });
+    to.value = f.dateTo || '';
+    to.onchange = e => { f.dateTo=e.target.value; f.dateMonth=''; f.dateYear=''; f.period=(f.dateFrom||f.dateTo)?'custom':'all'; render(); };
+    wrap.appendChild(from); wrap.appendChild(sep); wrap.appendChild(to);
+    return wrap;
+  }
+  function resetFilterButton(which) {
+    const b = h('button', { class:'filter-reset', type:'button' }, '↺ Сбросить фильтр');
+    b.onclick = () => resetF(which);
+    return b;
+  }
+  function resultSummary(count) {
+    return h('div', { class:'filter-result' }, 'Найдено: ' + count);
   }
   function sel(value, on, opts, label) {
     const s = h('select', {}, [h('option', { value:'' }, label)].concat(opts.map(o => h('option', { value:o }, o))));
@@ -960,35 +986,20 @@
     if (S.page === 'protocols') {
       mainKids.push(h('h1', {}, 'Контроль протокольных поручений'));
       
-      const assignedOpts = [...new Set(protoBase({assigned:true}).flatMap(r => r.sourceStructuralTokens || []))].sort();
-      const jointOpts = [...new Set(protoBase({joint:true}).flatMap(r => (r.organization.jointGroups||[]).concat(r.organization.isJointExecution?['да']:[])))].filter(Boolean).sort();
-      const spNames = [...new Set(protoBase({spLeaders:true}).flatMap(r => r.organization.spLeaders||[]))].sort();
-      const norNames = [...new Set(protoBase({norDirectors:true}).flatMap(r => r.organization.norDirectors||[]))].sort();
       const headNames = [...new Set(protoBase({heads:true}).flatMap(r => r.organization.departmentHeads||[]))].sort();
       const curCasc = [...new Set(protoBase({curators:true}).flatMap(r => r.organization.curators||[]))].sort();
       const unitCasc = [...new Set(protoBase({units:true}).flatMap(r => r.resolvedUnits||[]))].filter(Boolean).sort();
       const statuses = [...new Set(S.protocols.map(r=>r.executionStatusNormalized).filter(Boolean))];
-      mainKids.push(h('div', { class:'filters' }, [
-        periodSel(F.p), deadlineSel(F.p, [...new Set(S.protocols.filter(r=>r.deadlineType==='TEXT').map(r=>r.deadlineText).filter(Boolean))]), ms('p-st','Статус', statuses, F.p.statuses), ms('p-u','Структурное подразделение', unitCasc, F.p.units),
-        h('button', { class:'btn ghost', type:'button', onClick:()=>{F.p.showAll=!F.p.showAll;render();} }, F.p.showAll?'Скрыть фильтры':'Все фильтры ⚙'), inputQ(F.p,'pq')
-      ]));
-      if (F.p.showAll) mainKids.push(h('div', { class:'adv' }, [
-        ms('p-as','Назначено СП', assignedOpts, F.p.assigned),
+      mainKids.push(h('div', { class:'filter-bar' }, [
+        dateRangeControl(F.p),
         ms('p-cu','Руководитель-куратор', curCasc, F.p.curators),
+        ms('p-u','Структурное подразделение', unitCasc, F.p.units),
         ms('p-hd','Руководитель подразделения', headNames, F.p.heads, n=>leaderLabel(n,'head')),
-        ms('p-sp','Руководители СП', spNames, F.p.spLeaders, n=>leaderLabel(n,'sp')),
-        ms('p-nr','Директора НОР', norNames, F.p.norDirectors, n=>leaderLabel(n,'nor')),
-        ms('p-jo','Совместное исполнение', jointOpts, F.p.joint),
-        (function(){ const i=h('input',{type:'date'}); i.value=F.p.dateFrom; i.onchange=e=>{F.p.dateFrom=e.target.value;F.p.period='custom';render();}; i.title='Дата с'; return i; })(),
-        (function(){ const i=h('input',{type:'date'}); i.value=F.p.dateTo; i.onchange=e=>{F.p.dateTo=e.target.value;F.p.period='custom';render();}; i.title='Дата по'; return i; })(),
-        (function(){ const i=h('input',{type:'month'}); i.value=F.p.dateMonth; i.onchange=e=>{F.p.dateMonth=e.target.value;F.p.period='custom';render();}; return i; })(),
-        (function(){ const i=h('input',{placeholder:'Год документа'}); i.value=F.p.dateYear; i.setAttribute('data-fid','p-year'); i.oninput=e=>{F.p.dateYear=e.target.value;F.p.period='custom'; window.__fid='p-year'; window.__fpos=e.target.selectionStart; clearTimeout(window.__ft); window.__ft=setTimeout(render,280);}; return i; })(),
-        (function(){ const i=h('input',{type:'date'}); i.value=F.p.dlFrom; i.title='Срок с'; i.onchange=e=>{F.p.dlFrom=e.target.value;F.p.dlPreset='';render();}; return i; })(),
-        (function(){ const i=h('input',{type:'date'}); i.value=F.p.dlTo; i.title='Срок по'; i.onchange=e=>{F.p.dlTo=e.target.value;F.p.dlPreset='';render();}; return i; })(),
-        (function(){ const i=h('input',{type:'month'}); i.value=F.p.dlMonth; i.title='Срок месяц'; i.onchange=e=>{F.p.dlMonth=e.target.value;F.p.dlPreset='';render();}; return i; })(),
-        (function(){ const i=h('input',{placeholder:'Год срока'}); i.value=F.p.dlYear; i.setAttribute('data-fid','p-dly'); i.oninput=e=>{F.p.dlYear=e.target.value;F.p.dlPreset=''; window.__fid='p-dly'; window.__fpos=e.target.selectionStart; clearTimeout(window.__ft); window.__ft=setTimeout(render,280);}; return i; })()
+        deadlineSel(F.p, [...new Set(S.protocols.filter(r=>r.deadlineType==='TEXT').map(r=>r.deadlineText).filter(Boolean))]),
+        ms('p-st','Статус исполнения', statuses, F.p.statuses),
+        resetFilterButton('p')
       ]));
-      mainKids.push(chipBar(F.p,'p','Найдено: '+pv.length));
+      mainKids.push(resultSummary(pv.length));
 
       mainKids.push(h('div', { class:'kpis' }, [kpi('green','ВСЕГО',pAll,'',S.protoKpi==='all',()=>{S.protoKpi='all';render();}), kpi('red','ПРОСРОЧЕНО',pOd,'',S.protoKpi==='overdue',()=>{S.protoKpi='overdue';render();}), kpi('amber','В РАБОТЕ',pWork,'',S.protoKpi==='work',()=>{S.protoKpi='work';render();})]));
       mainKids.push(h('div', { class:'kpis' }, [kpi('gold sec','РАБОЧИЙ КОНТРОЛЬ',pWatch,'',S.protoKpi==='watch',()=>{S.protoKpi='watch';render();}), kpi('orange sec','НА СНЯТИИ С КОНТРОЛЯ',pRem,'',S.protoKpi==='removing',()=>{S.protoKpi='removing';render();}), kpi('lime sec','СНЯТ С КОНТРОЛЯ',pDone,'',S.protoKpi==='done',()=>{S.protoKpi='done';render();})]));
@@ -1002,41 +1013,20 @@
       
       const types=[...new Set(S.appeals.map(r=>r.type).filter(Boolean))];
       const ast=[...new Set(S.appeals.map(r=>r.executionStatusNormalized).filter(Boolean))];
-      const aJoint=[...new Set(appealBase({joint:true}).flatMap(r=> (r.organization.jointGroups||[]).concat(r.organization.isJointExecution?['да']:[])))].filter(Boolean);
-      const aSp=[...new Set(appealBase({spLeaders:true}).flatMap(r=>r.organization.spLeaders||[]))].sort();
-      const aNor=[...new Set(appealBase({norDirectors:true}).flatMap(r=>r.organization.norDirectors||[]))].sort();
       const aHead=[...new Set(appealBase({heads:true}).flatMap(r=>r.organization.departmentHeads||[]))].sort();
       const aUnits=[...new Set(appealBase({units:true}).map(r=>r.resolvedUnit).filter(Boolean))].sort();
       const aCur=[...new Set(appealBase({curators:true}).flatMap(r=>r.organization.curators||[]))].sort();
-      mainKids.push(h('div', { class:'filters' }, [
-        periodSel(F.a), deadlineSel(F.a, [...new Set(S.appeals.filter(r=>r.deadlineType==='TEXT').map(r=>r.deadlineText).filter(Boolean))]), ms('a-st','Статус', ast, F.a.statuses), ms('a-tp','Вид обращения', types, F.a.types),
-        h('button', { class:'btn ghost', type:'button', onClick:()=>{F.a.showAll=!F.a.showAll;render();} }, F.a.showAll?'Скрыть фильтры':'Все фильтры ⚙'), inputQ(F.a,'aq')
-      ]));
-      if (F.a.showAll) mainKids.push(h('div', { class:'adv' }, [
-        textField('a-num','Номер обращения', F.a.number, v=>F.a.number=v),
-        textField('a-au','Автор обращения', F.a.author, v=>F.a.author=v),
-        textField('a-sm','Краткое содержание', F.a.summary, v=>F.a.summary=v),
-        ms('a-u','Структурное подразделение', aUnits, F.a.units),
+      mainKids.push(h('div', { class:'filter-bar' }, [
+        dateRangeControl(F.a),
         ms('a-cu','Руководитель-куратор', aCur, F.a.curators),
+        ms('a-u','Структурное подразделение', aUnits, F.a.units),
         ms('a-hd','Руководитель подразделения', aHead, F.a.heads, n=>leaderLabel(n,'head')),
-        ms('a-sp','Руководители СП', aSp, F.a.spLeaders, n=>leaderLabel(n,'sp')),
-        ms('a-nr','Директора НОР', aNor, F.a.norDirectors, n=>leaderLabel(n,'nor')),
-        ms('a-jo','Совместное исполнение', aJoint.concat(['да']), F.a.joint),
-        (function(){ const i=h('input',{type:'date'}); i.value=F.a.dateFrom; i.onchange=e=>{F.a.dateFrom=e.target.value;F.a.period='custom';render();}; return i; })(),
-        (function(){ const i=h('input',{type:'date'}); i.value=F.a.dateTo; i.onchange=e=>{F.a.dateTo=e.target.value;F.a.period='custom';render();}; return i; })(),
-        (function(){ const i=h('input',{type:'month'}); i.value=F.a.dateMonth; i.onchange=e=>{F.a.dateMonth=e.target.value;F.a.period='custom';render();}; return i; })(),
-        (function(){ const i=h('input',{placeholder:'Год'}); i.value=F.a.dateYear; i.oninput=e=>{F.a.dateYear=e.target.value;F.a.period='custom';render();}; return i; })(),
-        (function(){ const i=h('input',{type:'date'}); i.value=F.a.dlFrom; i.title='Срок с'; i.onchange=e=>{F.a.dlFrom=e.target.value;F.a.dlPreset='';render();}; return i; })(),
-        (function(){ const i=h('input',{type:'date'}); i.value=F.a.dlTo; i.title='Срок по'; i.onchange=e=>{F.a.dlTo=e.target.value;F.a.dlPreset='';render();}; return i; })(),
-        (function(){ const i=h('input',{type:'month'}); i.value=F.a.dlMonth; i.title='Срок месяц'; i.onchange=e=>{F.a.dlMonth=e.target.value;F.a.dlPreset='';render();}; return i; })(),
-        textField('a-dly','Год срока', F.a.dlYear, v=>{F.a.dlYear=v;F.a.dlPreset='';}),
-        (function(){ const i=h('input',{type:'date'}); i.value=F.a.respFrom; i.onchange=e=>{F.a.respFrom=e.target.value;render();}; i.title='Дата ответа с'; return i; })(),
-        (function(){ const i=h('input',{type:'date'}); i.value=F.a.respTo; i.onchange=e=>{F.a.respTo=e.target.value;render();}; i.title='Дата ответа по'; return i; })(),
-        (function(){ const i=h('input',{type:'month'}); i.value=F.a.respMonth; i.title='Ответ месяц'; i.onchange=e=>{F.a.respMonth=e.target.value;render();}; return i; })(),
-        textField('a-ry','Год ответа', F.a.respYear, v=>{F.a.respYear=v;F.a.respMissing=false;}),
-        (function(){ const l=h('label',{class:'check-filter'}); const c=h('input',{type:'checkbox'}); c.checked=F.a.respMissing; c.onchange=e=>{F.a.respMissing=e.target.checked;if(F.a.respMissing){F.a.respFrom='';F.a.respTo='';F.a.respMonth='';F.a.respYear='';}render();}; l.appendChild(c); l.appendChild(document.createTextNode(' Ответ не предоставлен')); return l; })()
+        deadlineSel(F.a, [...new Set(S.appeals.filter(r=>r.deadlineType==='TEXT').map(r=>r.deadlineText).filter(Boolean))]),
+        ms('a-st','Статус исполнения', ast, F.a.statuses),
+        ms('a-tp','Вид обращения', types, F.a.types),
+        resetFilterButton('a')
       ]));
-      mainKids.push(chipBar(F.a,'a','Найдено: '+av.length));
+      mainKids.push(resultSummary(av.length));
 
       mainKids.push(h('div', { class:'kpis' }, [kpi('red','ПРОСРОЧЕНО',aOd,'',S.appealKpi==='overdue',()=>{S.appealKpi='overdue';S.tabA='overdue';render();}), kpi('amber','СРОК ДО 7 ДНЕЙ',aSoon,'',S.appealKpi==='soon',()=>{S.appealKpi='soon';S.tabA='all';render();}), kpi('sky','ЗАВЕРШЕНО',aDone,'',S.appealKpi==='done',()=>{S.appealKpi='done';S.tabA='done';render();})]));
       mainKids.push(tabs([['all','Все '+aAll],['work','На исполнении'],['overdue','Просроченные'],['done','Завершённые']], S.tabA, v => { S.tabA = v; S.appealKpi = ''; render(); }));
@@ -1049,36 +1039,19 @@
       mainKids.push(h('h1', {}, 'Контроль входящих документов'));
       
       const ist=[...new Set(S.incoming.map(r=>r.executionStatusNormalized).filter(Boolean))];
-      const iJoint=[...new Set(inBase({joint:true}).flatMap(r=>(r.organization.jointGroups||[]).concat(r.organization.isJointExecution?['да']:[])))].filter(Boolean);
-      const iSp=[...new Set(inBase({spLeaders:true}).flatMap(r=>r.organization.spLeaders||[]))].sort();
-      const iNor=[...new Set(inBase({norDirectors:true}).flatMap(r=>r.organization.norDirectors||[]))].sort();
       const iHead=[...new Set(inBase({heads:true}).flatMap(r=>r.organization.departmentHeads||[]))].sort();
-      const iPos=[...new Set(inBase({positions:true}).flatMap(r=>r.organization.positions||[]))].filter(Boolean).sort();
       const iUnits=[...new Set(inBase({units:true}).map(r=>r.resolvedUnit).filter(Boolean))].sort();
       const iCur=[...new Set(inBase({curators:true}).flatMap(r=>r.organization.curators||[]))].sort();
-      mainKids.push(h('div', { class:'filters' }, [
-        periodSel(F.i), deadlineSel(F.i, [...new Set(S.incoming.filter(r=>r.deadlineType==='TEXT').map(r=>r.deadlineText).filter(Boolean))]), ms('i-st','Статус', ist, F.i.statuses), ms('i-u','Структурное подразделение', iUnits, F.i.units),
-        h('button', { class:'btn ghost', type:'button', onClick:()=>{F.i.showAll=!F.i.showAll;render();} }, F.i.showAll?'Скрыть фильтры':'Все фильтры ⚙'), inputQ(F.i,'iq')
-      ]));
-      if (F.i.showAll) mainKids.push(h('div', { class:'adv' }, [
-        textField('i-num','Рег. номер и дата', F.i.number, v=>F.i.number=v),
-        textField('i-sm','Краткое содержание', F.i.summary, v=>F.i.summary=v),
+      mainKids.push(h('div', { class:'filter-bar' }, [
+        dateRangeControl(F.i),
         ms('i-cu','Руководитель-куратор', iCur, F.i.curators),
+        ms('i-u','Структурное подразделение', iUnits, F.i.units),
         ms('i-hd','Руководитель подразделения', iHead, F.i.heads, n=>leaderLabel(n,'head')),
-        ms('i-sp','Руководители СП', iSp, F.i.spLeaders, n=>leaderLabel(n,'sp')),
-        ms('i-nr','Директора НОР', iNor, F.i.norDirectors, n=>leaderLabel(n,'nor')),
-        ms('i-jo','Совместное исполнение', iJoint.concat(['да']), F.i.joint),
-        ms('i-po','Должность', iPos, F.i.positions),
-        (function(){ const i=h('input',{type:'date'}); i.value=F.i.dateFrom; i.title='Дата входящего с'; i.onchange=e=>{F.i.dateFrom=e.target.value;F.i.period='custom';render();}; return i; })(),
-        (function(){ const i=h('input',{type:'date'}); i.value=F.i.dateTo; i.title='Дата входящего по'; i.onchange=e=>{F.i.dateTo=e.target.value;F.i.period='custom';render();}; return i; })(),
-        (function(){ const i=h('input',{type:'month'}); i.value=F.i.dateMonth; i.title='Месяц входящего'; i.onchange=e=>{F.i.dateMonth=e.target.value;F.i.period='custom';render();}; return i; })(),
-        textField('i-year','Год входящего', F.i.dateYear, v=>{F.i.dateYear=v;F.i.period='custom';}),
-        (function(){ const i=h('input',{type:'date'}); i.value=F.i.dlFrom; i.title='Срок с'; i.onchange=e=>{F.i.dlFrom=e.target.value;F.i.dlPreset='';render();}; return i; })(),
-        (function(){ const i=h('input',{type:'date'}); i.value=F.i.dlTo; i.title='Срок по'; i.onchange=e=>{F.i.dlTo=e.target.value;F.i.dlPreset='';render();}; return i; })(),
-        (function(){ const i=h('input',{type:'month'}); i.value=F.i.dlMonth; i.title='Срок месяц'; i.onchange=e=>{F.i.dlMonth=e.target.value;F.i.dlPreset='';render();}; return i; })(),
-        textField('i-dly','Год срока', F.i.dlYear, v=>{F.i.dlYear=v;F.i.dlPreset='';})
+        deadlineSel(F.i, [...new Set(S.incoming.filter(r=>r.deadlineType==='TEXT').map(r=>r.deadlineText).filter(Boolean))]),
+        ms('i-st','Статус исполнения', ist, F.i.statuses),
+        resetFilterButton('i')
       ]));
-      mainKids.push(chipBar(F.i,'i','Найдено: '+iv.length));
+      mainKids.push(resultSummary(iv.length));
 
       mainKids.push(h('div', { class:'kpis' }, [kpi('red','ПРОСРОЧЕНО',iOd,'',S.inKpi==='overdue',()=>{S.inKpi='overdue';S.tabI='overdue';render();}), kpi('amber','СРОК ДО 7 ДНЕЙ',iSoon,'',S.inKpi==='soon',()=>{S.inKpi='soon';S.tabI='all';render();}), kpi('sky','ВЫПОЛНЕНО',iDone,'',S.inKpi==='done',()=>{S.inKpi='done';S.tabI='done';render();})]));
       mainKids.push(tabs([['all','Все '+iAll],['work','На исполнении'],['overdue','Просроченные'],['done','Выполненные']], S.tabI, v => { S.tabI = v; S.inKpi = ''; render(); }));
@@ -1112,9 +1085,9 @@
 
     if (S.detail) {
       const d = S.detail, kv = [], add = (k, v) => { kv.push(h('b', {}, k)); kv.push(h('span', {}, v == null || v === '' ? '—' : String(v))); };
-      if (d.kind === 'p') { add('№ Протокола', d.protocolNumberRaw); add('Дата', fmt(d.protocolDate)); add('№ поручения', d.assignmentNumberRaw); add('Содержание поручения', d.assignmentText); add('Структурное подразделение — источник', d.sourceStructuralUnitRaw); add('Структурные подразделения — resolved', (d.resolvedUnits||[]).join(', ')); add('Срок исполнения', d.deadlineDisplay); add('Информация о ходе исполнения', d.progressInfo); add('Статус исполнения', d.executionStatusNormalized); add('Следующее действие', d.nextAction); add('Руководитель-куратор', (d.organization.curators||[]).join(', ')); add('Совместное исполнение', (d.organization.jointGroups||[]).join(', ') || (d.organization.isJointExecution?'Да':'Нет')); add('Руководитель подразделения', (d.organization.departmentHeads||[]).join(', ')); add('Руководители СП', (d.organization.spLeaders||[]).join(', ')); add('Директора НОР', (d.organization.norDirectors||[]).join(', ')); add('Исходная строка', d.sourceRowNumber); }
-      else if (d.kind === 'a') { add('Номер обращения', d.number); add('Дата регистрации обращения', fmt(d.registrationDate)); add('Автор обращения', d.author); add('Вид обращения', d.type); add('Краткое содержание', d.summary); add('Ответственный исполнитель', d.responsibleFio); add('Структурное подразделение', d.resolvedUnit); add('Срок исполнения', d.deadlineDisplay); add('Дата предоставления ответа', fmt(d.responseDate)); add('Статус исполнения', d.executionStatusNormalized); add('Следующее действие', d.nextAction); add('Руководитель-куратор', (d.organization.curators||[]).join(', ')); add('Совместное исполнение', (d.organization.jointGroups||[]).join(', ') || (d.organization.isJointExecution?'Да':'Нет')); add('Руководитель подразделения', (d.organization.departmentHeads||[]).join(', ')); add('Руководитель СП', (d.organization.spLeaders||[]).join(', ')); add('Директор НОР', (d.organization.norDirectors||[]).join(', ')); add('Исходная строка', d.sourceRowNumber); add('Исходное подразделение из выгрузки', d.sourceDepartment); }
-      else { add('Рег. номер и дата входящего документа', d.regNumberDate); add('Краткое содержание', d.summary); add('Структурное подразделение', d.resolvedUnit); add('Должность', (d.organization.positions||[]).join(', ')); add('Срок исполнения', d.deadlineDisplay); add('Статус исполнения', d.executionStatusNormalized); add('Следующее действие', d.nextAction); add('Руководитель-куратор', (d.organization.curators||[]).join(', ')); add('Совместное исполнение', (d.organization.jointGroups||[]).join(', ') || (d.organization.isJointExecution?'Да':'Нет')); add('Руководитель подразделения', (d.organization.departmentHeads||[]).join(', ')); add('Руководитель СП', (d.organization.spLeaders||[]).join(', ')); add('Директор НОР', (d.organization.norDirectors||[]).join(', ')); add('Исходная строка', d.sourceRowNumber); add('Исходное подразделение из выгрузки', d.sourceDepartment); }
+      if (d.kind === 'p') { add('№ Протокола', d.protocolNumberRaw); add('Дата', fmt(d.protocolDate)); add('№ поручения', d.assignmentNumberRaw); add('Содержание поручения', d.assignmentText); add('Структурное подразделение — источник', d.sourceStructuralUnitRaw); add('Структурные подразделения — resolved', (d.resolvedUnits||[]).join(', ')); add('Срок исполнения', d.deadlineDisplay); add('Информация о ходе исполнения', d.progressInfo); add('Статус исполнения', d.executionStatusNormalized); add('Следующее действие', d.nextAction); add('Руководитель-куратор', (d.organization.curators||[]).join(', ')); add('Совместное исполнение', (d.organization.jointGroups||[]).join(', ') || (d.organization.isJointExecution?'Совместное исполнение':'Нет')); add('Руководитель подразделения', (d.organization.departmentHeads||[]).join(', ')); add('Руководители СП', (d.organization.spLeaders||[]).join(', ')); add('Директора НОР', (d.organization.norDirectors||[]).join(', ')); add('Исходная строка', d.sourceRowNumber); }
+      else if (d.kind === 'a') { add('Номер обращения', d.number); add('Дата регистрации обращения', fmt(d.registrationDate)); add('Автор обращения', d.author); add('Вид обращения', d.type); add('Краткое содержание', d.summary); add('Ответственный исполнитель', d.responsibleFio); add('Структурное подразделение', d.resolvedUnit); add('Срок исполнения', d.deadlineDisplay); add('Дата предоставления ответа', fmt(d.responseDate)); add('Статус исполнения', d.executionStatusNormalized); add('Следующее действие', d.nextAction); add('Руководитель-куратор', (d.organization.curators||[]).join(', ')); add('Совместное исполнение', (d.organization.jointGroups||[]).join(', ') || (d.organization.isJointExecution?'Совместное исполнение':'Нет')); add('Руководитель подразделения', (d.organization.departmentHeads||[]).join(', ')); add('Руководитель СП', (d.organization.spLeaders||[]).join(', ')); add('Директор НОР', (d.organization.norDirectors||[]).join(', ')); add('Исходная строка', d.sourceRowNumber); add('Исходное подразделение из выгрузки', d.sourceDepartment); }
+      else { add('Рег. номер и дата входящего документа', d.regNumberDate); add('Краткое содержание', d.summary); add('Структурное подразделение', d.resolvedUnit); add('Должность', (d.organization.positions||[]).join(', ')); add('Срок исполнения', d.deadlineDisplay); add('Статус исполнения', d.executionStatusNormalized); add('Следующее действие', d.nextAction); add('Руководитель-куратор', (d.organization.curators||[]).join(', ')); add('Совместное исполнение', (d.organization.jointGroups||[]).join(', ') || (d.organization.isJointExecution?'Совместное исполнение':'Нет')); add('Руководитель подразделения', (d.organization.departmentHeads||[]).join(', ')); add('Руководитель СП', (d.organization.spLeaders||[]).join(', ')); add('Директор НОР', (d.organization.norDirectors||[]).join(', ')); add('Исходная строка', d.sourceRowNumber); add('Исходное подразделение из выгрузки', d.sourceDepartment); }
       root.appendChild(h('div', { class:'drawer-back', onClick:() => { S.detail = null; render(); } }));
       root.appendChild(h('aside', { class:'drawer' }, [h('button', { class:'btn ghost', onClick:() => { S.detail = null; render(); } }, 'Закрыть'), h('h2', {}, d.kind === 'p' ? 'Поручение' : d.kind === 'a' ? 'Обращение' : 'Входящий документ'), h('div', { class:'kv' }, kv)].concat((d.warnings||[]).map(w => { const x=normalizeIssue(w); return h('div', { class:'dq-line dq-'+x.severity.toLowerCase() }, x.severity+' · '+x.message); }))));
     }

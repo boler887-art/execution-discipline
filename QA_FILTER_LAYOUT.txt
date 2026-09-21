@@ -1,0 +1,55 @@
+VZHDO filter rework QA
+
+Final visible filter order — Protocols / Incoming:
+1. Период: от / до
+2. Руководитель-куратор
+3. Структурное подразделение
+4. Руководитель подразделения
+5. Срок исполнения
+6. Статус исполнения
+7. Сбросить фильтр (right side)
+
+Final visible filter order — e-Өтініш:
+1. Период: от / до
+2. Руководитель-куратор
+3. Структурное подразделение
+4. Руководитель подразделения
+5. Срок исполнения
+6. Статус исполнения
+7. Вид обращения
+8. Сбросить фильтр (right side)
+
+Removed from filter UI:
+- global search field
+- separate date / month / year controls
+- Только совместное исполнение
+- Совместное исполнение
+- Руководители СП
+- Директора НОР
+- Назначено СП
+- Должность
+- Номер / автор / краткое содержание fields
+- response date controls
+- Все фильтры button
+
+Multi-select popup:
+- internal search retained for finding an option in a long list
+- only Очистить action is shown
+- Все action removed
+
+Reset behavior:
+- clears current module filter state
+- clears current KPI predicate
+- e-Өтініш / Incoming return to tab Все
+
+Overview retained:
+- Other documents ВСЕГО = green
+- ПРОСРОЧЕНО = red
+- В РАБОТЕ = amber/yellow
+- mini KPI number = 40px
+- protocol main KPI number = 48px
+
+Static checks:
+- app.js: node --check PASS
+- structure.xlsx remains in repository root
+- 1/2/3 remain browser-uploaded operational files
