@@ -127,7 +127,7 @@
   const emptyRow = (row) => !row || row.every(c => c == null || String(c).trim() === '');
 
   function emptyF() {
-    return { q:'', units:[], assigned:[], curators:[], heads:[], spLeaders:[], norDirectors:[], joint:[], statuses:[], types:[], positions:[], number:'', author:'', summary:'', period:'all', dateFrom:'', dateTo:'', dateMonth:'', dateYear:'', dlPreset:'', dlFrom:'', dlTo:'', dlMonth:'', dlYear:'', respFrom:'', respTo:'', respMonth:'', respYear:'', respMissing:false, onlyJoint:false, showAll:false };
+    return { q:'', units:[], assigned:[], curators:[], heads:[], spLeaders:[], norDirectors:[], joint:[], statuses:[], types:[], positions:[], number:'', author:'', summary:'', period:'all', dateFrom:'', dateTo:'', dateMonth:'', dateYear:'', dlPreset:'', dlFrom:'', dlTo:'', dlMonth:'', dlYear:'', respFrom:'', respTo:'', respMonth:'', respYear:'', respMissing:false, showAll:false };
   }
   const F = { p: emptyF(), a: emptyF(), i: emptyF() };
   const SORT = { p: {key:'', dir:1}, a: {key:'', dir:1}, i: {key:'', dir:1} };
@@ -451,7 +451,7 @@
       heads:new Set(rows.flatMap(r => (r.organization&&r.organization.departmentHeads)||[])),
       spLeaders:new Set(rows.flatMap(r => (r.organization&&r.organization.spLeaders)||[])),
       norDirectors:new Set(rows.flatMap(r => (r.organization&&r.organization.norDirectors)||[])),
-      joint:new Set(rows.flatMap(r => (r.organization&&r.organization.jointGroups)||[])),
+      joint:new Set(rows.flatMap(r => ((r.organization&&r.organization.jointGroups)||[]).concat(r.organization&&r.organization.isJointExecution?['да']:[]))),
       positions:new Set(rows.flatMap(r => (r.organization&&r.organization.positions)||[]))
     });
     [['p',S.protocols],['a',S.appeals],['i',S.incoming]].forEach(([k,rows]) => {
@@ -575,8 +575,10 @@
       if (!skip.heads && !hasAny(f.heads, r.organization.departmentHeads)) return false;
       if (!skip.spLeaders && !hasAny(f.spLeaders, r.organization.spLeaders)) return false;
       if (!skip.norDirectors && !hasAny(f.norDirectors, r.organization.norDirectors)) return false;
-      if (!skip.joint && f.joint && f.joint.length && !hasAny(f.joint, r.organization.jointGroups)) return false;
-      if (f.onlyJoint && !r.organization.isJointExecution) return false;
+      if (!skip.joint && f.joint && f.joint.length) {
+        const ok = hasAny(f.joint, r.organization.jointGroups) || (f.joint.includes('да') && r.organization.isJointExecution);
+        if (!ok) return false;
+      }
       if (!hasAny(f.statuses, [r.executionStatusNormalized])) return false;
       if (!matchPeriod(r.protocolDate, f)) return false;
       if (!matchDeadline(r, f)) return false;
@@ -605,7 +607,7 @@
       if (!skip.heads && !hasAny(f.heads, r.organization.departmentHeads)) return false;
       if (!skip.spLeaders && !hasAny(f.spLeaders, r.organization.spLeaders)) return false;
       if (!skip.norDirectors && !hasAny(f.norDirectors, r.organization.norDirectors)) return false;
-      if (!skip.joint && f.joint && f.joint.length && !hasAny(f.joint, r.organization.jointGroups)) return false;
+      if (!skip.joint && f.joint && f.joint.length && !hasAny(f.joint, r.organization.jointGroups) && !(f.joint.includes('да') && r.organization.isJointExecution)) return false;
       if (!hasAny(f.statuses, [r.executionStatusNormalized])) return false;
       if (!matchPeriod(r.registrationDate, f)) return false;
       if (!matchDeadline(r, f)) return false;
@@ -641,7 +643,7 @@
       if (!skip.spLeaders && !hasAny(f.spLeaders, r.organization.spLeaders)) return false;
       if (!skip.norDirectors && !hasAny(f.norDirectors, r.organization.norDirectors)) return false;
       if (!skip.positions && !hasAny(f.positions, r.organization.positions)) return false;
-      if (!skip.joint && f.joint && f.joint.length && !hasAny(f.joint, r.organization.jointGroups)) return false;
+      if (!skip.joint && f.joint && f.joint.length && !hasAny(f.joint, r.organization.jointGroups) && !(f.joint.includes('да') && r.organization.isJointExecution)) return false;
       if (!hasAny(f.statuses, [r.executionStatusNormalized])) return false;
       if (!matchDeadline(r, f)) return false;
       const rd = extractRegDate(r.regNumberDate);
@@ -680,7 +682,7 @@
       });
       pop.appendChild(search);
       const acts = h('div', { class:'ms-actions' }, [h('button',{class:'btn ghost',type:'button'},'Все'), h('button',{class:'btn ghost',type:'button'},'Очистить')]);
-      acts.children[0].onclick = () => { selected.splice(0, selected.length); render(); };
+      acts.children[0].onclick = () => { selected.splice(0, selected.length, ...opts); render(); };
       acts.children[1].onclick = () => { selected.splice(0, selected.length); render(); };
       pop.appendChild(acts);
       opts.forEach(o => {
@@ -703,14 +705,7 @@
     }
     return box;
   }
-  function resetF(which) {
-    F[which] = emptyF();
-    openMs = '';
-    if (which === 'p') S.protoKpi = '';
-    if (which === 'a') { S.appealKpi = ''; S.tabA = 'all'; }
-    if (which === 'i') { S.inKpi = ''; S.tabI = 'all'; }
-    render();
-  }
+  function resetF(which) { F[which] = emptyF(); render(); }
   function chipBar(f, which, extra) {
     const chips = [];
     const add = (k, arr, clear) => (arr||[]).forEach(v => {
@@ -725,7 +720,6 @@
     add('Руководитель СП', f.spLeaders, v => f.spLeaders = f.spLeaders.filter(x=>x!==v));
     add('Директор НОР', f.norDirectors, v => f.norDirectors = f.norDirectors.filter(x=>x!==v));
     add('Совместное', f.joint, v => f.joint = f.joint.filter(x=>x!==v));
-    if (f.onlyJoint) add('Режим', ['Только совместное исполнение'], () => f.onlyJoint=false);
     add('Статус', f.statuses, v => f.statuses = f.statuses.filter(x=>x!==v));
     add('Вид', f.types, v => f.types = f.types.filter(x=>x!==v));
     add('Должность', f.positions, v => f.positions = f.positions.filter(x=>x!==v));
@@ -739,7 +733,7 @@
     const rst = h('button', { class:'btn ghost', type:'button' }, 'Сбросить все');
     rst.onclick = () => resetF(which);
     bar.appendChild(rst);
-    const cnt = ['units','assigned','curators','heads','spLeaders','norDirectors','joint','statuses','types','positions'].reduce((n,k)=>n+(f[k]||[]).length,0) + ['number','author','summary','dateFrom','dateTo','dateMonth','dateYear','dlPreset','dlFrom','dlTo','dlMonth','dlYear','respFrom','respTo','respMonth','respYear'].reduce((n,k)=>n+(f[k]?1:0),0) + (f.period && f.period!=='all'?1:0) + (f.respMissing?1:0) + (f.q?1:0) + (f.onlyJoint?1:0);
+    const cnt = ['units','assigned','curators','heads','spLeaders','norDirectors','joint','statuses','types','positions'].reduce((n,k)=>n+(f[k]||[]).length,0) + ['number','author','summary','dateFrom','dateTo','dateMonth','dateYear','dlPreset','dlFrom','dlTo','dlMonth','dlYear','respFrom','respTo','respMonth','respYear'].reduce((n,k)=>n+(f[k]?1:0),0) + (f.period && f.period!=='all'?1:0) + (f.respMissing?1:0) + (f.q?1:0);
     bar.appendChild(h('span', { class:'filter-count' }, 'Активных фильтров: ' + cnt));
     bar.appendChild(h('span', { class:'found' }, extra || ''));
     return bar;
@@ -967,7 +961,7 @@
       mainKids.push(h('h1', {}, 'Контроль протокольных поручений'));
       
       const assignedOpts = [...new Set(protoBase({assigned:true}).flatMap(r => r.sourceStructuralTokens || []))].sort();
-      const jointOpts = [...new Set(protoBase({joint:true}).flatMap(r => r.organization.jointGroups||[]))].filter(Boolean).sort();
+      const jointOpts = [...new Set(protoBase({joint:true}).flatMap(r => (r.organization.jointGroups||[]).concat(r.organization.isJointExecution?['да']:[])))].filter(Boolean).sort();
       const spNames = [...new Set(protoBase({spLeaders:true}).flatMap(r => r.organization.spLeaders||[]))].sort();
       const norNames = [...new Set(protoBase({norDirectors:true}).flatMap(r => r.organization.norDirectors||[]))].sort();
       const headNames = [...new Set(protoBase({heads:true}).flatMap(r => r.organization.departmentHeads||[]))].sort();
@@ -985,7 +979,6 @@
         ms('p-sp','Руководители СП', spNames, F.p.spLeaders, n=>leaderLabel(n,'sp')),
         ms('p-nr','Директора НОР', norNames, F.p.norDirectors, n=>leaderLabel(n,'nor')),
         ms('p-jo','Совместное исполнение', jointOpts, F.p.joint),
-        (function(){ const l=h('label',{class:'check-filter'}); const c=h('input',{type:'checkbox'}); c.checked=F.p.onlyJoint; c.onchange=e=>{F.p.onlyJoint=e.target.checked;render();}; l.appendChild(c); l.appendChild(document.createTextNode(' Только совместное исполнение')); return l; })(),
         (function(){ const i=h('input',{type:'date'}); i.value=F.p.dateFrom; i.onchange=e=>{F.p.dateFrom=e.target.value;F.p.period='custom';render();}; i.title='Дата с'; return i; })(),
         (function(){ const i=h('input',{type:'date'}); i.value=F.p.dateTo; i.onchange=e=>{F.p.dateTo=e.target.value;F.p.period='custom';render();}; i.title='Дата по'; return i; })(),
         (function(){ const i=h('input',{type:'month'}); i.value=F.p.dateMonth; i.onchange=e=>{F.p.dateMonth=e.target.value;F.p.period='custom';render();}; return i; })(),
@@ -1009,7 +1002,7 @@
       
       const types=[...new Set(S.appeals.map(r=>r.type).filter(Boolean))];
       const ast=[...new Set(S.appeals.map(r=>r.executionStatusNormalized).filter(Boolean))];
-      const aJoint=[...new Set(appealBase({joint:true}).flatMap(r=>r.organization.jointGroups||[]))].filter(Boolean).sort();
+      const aJoint=[...new Set(appealBase({joint:true}).flatMap(r=> (r.organization.jointGroups||[]).concat(r.organization.isJointExecution?['да']:[])))].filter(Boolean);
       const aSp=[...new Set(appealBase({spLeaders:true}).flatMap(r=>r.organization.spLeaders||[]))].sort();
       const aNor=[...new Set(appealBase({norDirectors:true}).flatMap(r=>r.organization.norDirectors||[]))].sort();
       const aHead=[...new Set(appealBase({heads:true}).flatMap(r=>r.organization.departmentHeads||[]))].sort();
@@ -1028,7 +1021,7 @@
         ms('a-hd','Руководитель подразделения', aHead, F.a.heads, n=>leaderLabel(n,'head')),
         ms('a-sp','Руководители СП', aSp, F.a.spLeaders, n=>leaderLabel(n,'sp')),
         ms('a-nr','Директора НОР', aNor, F.a.norDirectors, n=>leaderLabel(n,'nor')),
-        ms('a-jo','Совместное исполнение', aJoint, F.a.joint),
+        ms('a-jo','Совместное исполнение', aJoint.concat(['да']), F.a.joint),
         (function(){ const i=h('input',{type:'date'}); i.value=F.a.dateFrom; i.onchange=e=>{F.a.dateFrom=e.target.value;F.a.period='custom';render();}; return i; })(),
         (function(){ const i=h('input',{type:'date'}); i.value=F.a.dateTo; i.onchange=e=>{F.a.dateTo=e.target.value;F.a.period='custom';render();}; return i; })(),
         (function(){ const i=h('input',{type:'month'}); i.value=F.a.dateMonth; i.onchange=e=>{F.a.dateMonth=e.target.value;F.a.period='custom';render();}; return i; })(),
@@ -1056,7 +1049,7 @@
       mainKids.push(h('h1', {}, 'Контроль входящих документов'));
       
       const ist=[...new Set(S.incoming.map(r=>r.executionStatusNormalized).filter(Boolean))];
-      const iJoint=[...new Set(inBase({joint:true}).flatMap(r=>r.organization.jointGroups||[]))].filter(Boolean).sort();
+      const iJoint=[...new Set(inBase({joint:true}).flatMap(r=>(r.organization.jointGroups||[]).concat(r.organization.isJointExecution?['да']:[])))].filter(Boolean);
       const iSp=[...new Set(inBase({spLeaders:true}).flatMap(r=>r.organization.spLeaders||[]))].sort();
       const iNor=[...new Set(inBase({norDirectors:true}).flatMap(r=>r.organization.norDirectors||[]))].sort();
       const iHead=[...new Set(inBase({heads:true}).flatMap(r=>r.organization.departmentHeads||[]))].sort();
@@ -1074,7 +1067,7 @@
         ms('i-hd','Руководитель подразделения', iHead, F.i.heads, n=>leaderLabel(n,'head')),
         ms('i-sp','Руководители СП', iSp, F.i.spLeaders, n=>leaderLabel(n,'sp')),
         ms('i-nr','Директора НОР', iNor, F.i.norDirectors, n=>leaderLabel(n,'nor')),
-        ms('i-jo','Совместное исполнение', iJoint, F.i.joint),
+        ms('i-jo','Совместное исполнение', iJoint.concat(['да']), F.i.joint),
         ms('i-po','Должность', iPos, F.i.positions),
         (function(){ const i=h('input',{type:'date'}); i.value=F.i.dateFrom; i.title='Дата входящего с'; i.onchange=e=>{F.i.dateFrom=e.target.value;F.i.period='custom';render();}; return i; })(),
         (function(){ const i=h('input',{type:'date'}); i.value=F.i.dateTo; i.title='Дата входящего по'; i.onchange=e=>{F.i.dateTo=e.target.value;F.i.period='custom';render();}; return i; })(),
@@ -1119,9 +1112,9 @@
 
     if (S.detail) {
       const d = S.detail, kv = [], add = (k, v) => { kv.push(h('b', {}, k)); kv.push(h('span', {}, v == null || v === '' ? '—' : String(v))); };
-      if (d.kind === 'p') { add('№ Протокола', d.protocolNumberRaw); add('Дата', fmt(d.protocolDate)); add('№ поручения', d.assignmentNumberRaw); add('Содержание поручения', d.assignmentText); add('Структурное подразделение — источник', d.sourceStructuralUnitRaw); add('Структурные подразделения — resolved', (d.resolvedUnits||[]).join(', ')); add('Срок исполнения', d.deadlineDisplay); add('Информация о ходе исполнения', d.progressInfo); add('Статус исполнения', d.executionStatusNormalized); add('Следующее действие', d.nextAction); add('Руководитель-куратор', (d.organization.curators||[]).join(', ')); add('Совместное исполнение', (d.organization.jointGroups||[]).join(', ') || (d.organization.isJointExecution?'Совместное исполнение':'Нет')); add('Руководитель подразделения', (d.organization.departmentHeads||[]).join(', ')); add('Руководители СП', (d.organization.spLeaders||[]).join(', ')); add('Директора НОР', (d.organization.norDirectors||[]).join(', ')); add('Исходная строка', d.sourceRowNumber); }
-      else if (d.kind === 'a') { add('Номер обращения', d.number); add('Дата регистрации обращения', fmt(d.registrationDate)); add('Автор обращения', d.author); add('Вид обращения', d.type); add('Краткое содержание', d.summary); add('Ответственный исполнитель', d.responsibleFio); add('Структурное подразделение', d.resolvedUnit); add('Срок исполнения', d.deadlineDisplay); add('Дата предоставления ответа', fmt(d.responseDate)); add('Статус исполнения', d.executionStatusNormalized); add('Следующее действие', d.nextAction); add('Руководитель-куратор', (d.organization.curators||[]).join(', ')); add('Совместное исполнение', (d.organization.jointGroups||[]).join(', ') || (d.organization.isJointExecution?'Совместное исполнение':'Нет')); add('Руководитель подразделения', (d.organization.departmentHeads||[]).join(', ')); add('Руководитель СП', (d.organization.spLeaders||[]).join(', ')); add('Директор НОР', (d.organization.norDirectors||[]).join(', ')); add('Исходная строка', d.sourceRowNumber); add('Исходное подразделение из выгрузки', d.sourceDepartment); }
-      else { add('Рег. номер и дата входящего документа', d.regNumberDate); add('Краткое содержание', d.summary); add('Структурное подразделение', d.resolvedUnit); add('Должность', (d.organization.positions||[]).join(', ')); add('Срок исполнения', d.deadlineDisplay); add('Статус исполнения', d.executionStatusNormalized); add('Следующее действие', d.nextAction); add('Руководитель-куратор', (d.organization.curators||[]).join(', ')); add('Совместное исполнение', (d.organization.jointGroups||[]).join(', ') || (d.organization.isJointExecution?'Совместное исполнение':'Нет')); add('Руководитель подразделения', (d.organization.departmentHeads||[]).join(', ')); add('Руководитель СП', (d.organization.spLeaders||[]).join(', ')); add('Директор НОР', (d.organization.norDirectors||[]).join(', ')); add('Исходная строка', d.sourceRowNumber); add('Исходное подразделение из выгрузки', d.sourceDepartment); }
+      if (d.kind === 'p') { add('№ Протокола', d.protocolNumberRaw); add('Дата', fmt(d.protocolDate)); add('№ поручения', d.assignmentNumberRaw); add('Содержание поручения', d.assignmentText); add('Структурное подразделение — источник', d.sourceStructuralUnitRaw); add('Структурные подразделения — resolved', (d.resolvedUnits||[]).join(', ')); add('Срок исполнения', d.deadlineDisplay); add('Информация о ходе исполнения', d.progressInfo); add('Статус исполнения', d.executionStatusNormalized); add('Следующее действие', d.nextAction); add('Руководитель-куратор', (d.organization.curators||[]).join(', ')); add('Совместное исполнение', (d.organization.jointGroups||[]).join(', ') || (d.organization.isJointExecution?'Да':'Нет')); add('Руководитель подразделения', (d.organization.departmentHeads||[]).join(', ')); add('Руководители СП', (d.organization.spLeaders||[]).join(', ')); add('Директора НОР', (d.organization.norDirectors||[]).join(', ')); add('Исходная строка', d.sourceRowNumber); }
+      else if (d.kind === 'a') { add('Номер обращения', d.number); add('Дата регистрации обращения', fmt(d.registrationDate)); add('Автор обращения', d.author); add('Вид обращения', d.type); add('Краткое содержание', d.summary); add('Ответственный исполнитель', d.responsibleFio); add('Структурное подразделение', d.resolvedUnit); add('Срок исполнения', d.deadlineDisplay); add('Дата предоставления ответа', fmt(d.responseDate)); add('Статус исполнения', d.executionStatusNormalized); add('Следующее действие', d.nextAction); add('Руководитель-куратор', (d.organization.curators||[]).join(', ')); add('Совместное исполнение', (d.organization.jointGroups||[]).join(', ') || (d.organization.isJointExecution?'Да':'Нет')); add('Руководитель подразделения', (d.organization.departmentHeads||[]).join(', ')); add('Руководитель СП', (d.organization.spLeaders||[]).join(', ')); add('Директор НОР', (d.organization.norDirectors||[]).join(', ')); add('Исходная строка', d.sourceRowNumber); add('Исходное подразделение из выгрузки', d.sourceDepartment); }
+      else { add('Рег. номер и дата входящего документа', d.regNumberDate); add('Краткое содержание', d.summary); add('Структурное подразделение', d.resolvedUnit); add('Должность', (d.organization.positions||[]).join(', ')); add('Срок исполнения', d.deadlineDisplay); add('Статус исполнения', d.executionStatusNormalized); add('Следующее действие', d.nextAction); add('Руководитель-куратор', (d.organization.curators||[]).join(', ')); add('Совместное исполнение', (d.organization.jointGroups||[]).join(', ') || (d.organization.isJointExecution?'Да':'Нет')); add('Руководитель подразделения', (d.organization.departmentHeads||[]).join(', ')); add('Руководитель СП', (d.organization.spLeaders||[]).join(', ')); add('Директор НОР', (d.organization.norDirectors||[]).join(', ')); add('Исходная строка', d.sourceRowNumber); add('Исходное подразделение из выгрузки', d.sourceDepartment); }
       root.appendChild(h('div', { class:'drawer-back', onClick:() => { S.detail = null; render(); } }));
       root.appendChild(h('aside', { class:'drawer' }, [h('button', { class:'btn ghost', onClick:() => { S.detail = null; render(); } }, 'Закрыть'), h('h2', {}, d.kind === 'p' ? 'Поручение' : d.kind === 'a' ? 'Обращение' : 'Входящий документ'), h('div', { class:'kv' }, kv)].concat((d.warnings||[]).map(w => { const x=normalizeIssue(w); return h('div', { class:'dq-line dq-'+x.severity.toLowerCase() }, x.severity+' · '+x.message); }))));
     }
